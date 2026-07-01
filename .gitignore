@@ -1,7 +1,5 @@
 
-/*.egg-info
-/.venv
-/.pycache
-/.mypy_cache
-
-
+*.egg-info/
+.venv/
+.pycache/
+.mypy_cache/
