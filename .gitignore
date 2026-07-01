@@ -3,3 +3,7 @@
 .venv/
 .pycache/
 .mypy_cache/
+__pycache__
+
+coverage_data/
+.coverage

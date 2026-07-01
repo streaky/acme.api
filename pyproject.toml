@@ -23,6 +23,16 @@ classifiers = [
 ]
 dependencies = [
     "PyYAML",
+    "fastapi",
+    "uvicorn[standard]",
+    "sqlalchemy[asyncio]",
+    "aiosqlite",
+    "apscheduler",
+    "pydantic-settings",
+    "httpx",
+    "prometheus-client",
+    "passlib[bcrypt]",
+    "aiofiles",
 ]
 
 [project.urls]
@@ -37,14 +47,15 @@ dev = [
     "isort",
     "mypy",
     "pytest",
+    "pytest-asyncio",
     "pytest-cov",
     "pylint",
     "types-PyYAML",
+    "httpx",
 ]
 
 [project.scripts]
-# TODO: add entry point once the main module is implemented.
-
+acme-api = "acme_api.main:main"
 [tool.setuptools]
 package-dir = {"" = "."}
 
@@ -61,6 +72,13 @@ load-plugins = []
 
 [tool.pylint."MESSAGES CONTROL"]
 disable = [
+    "missing-class-docstring",
+    "missing-function-docstring",
+    "import-outside-toplevel",
+    "redefined-outer-name",
+    "too-few-public-methods",
+    "no-member",
+    "unspecified-encoding",
 ]
 
 [tool.flake8]
@@ -73,7 +91,6 @@ statistics = true
 profile = "black"
 src_paths = ["acme_api", "tests"]
 known_first_party = ["acme_api"]
-
 [tool.pytest.ini_options]
 pythonpath = ["."]
 filterwarnings = []
@@ -82,6 +99,7 @@ addopts = [
     "--tb=short",
     "--cov-report=term",
 ]
+asyncio_mode = "auto"
 
 [tool.mypy]
 python_version = "3.14"
