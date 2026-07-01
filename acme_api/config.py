@@ -37,11 +37,37 @@ class DeploymentConfig(BaseModel):
     permissions_key: int = 0o600
 
 
-class AcmeConfig(BaseModel):
-    """acme.sh binary and state directory configuration."""
+class DnsProviderConfig(BaseModel):
+    """DNS provider alias configuration.
 
-    binary_path: str = "/usr/local/bin/acme.sh"
-    home_dir: Path = Path("/acmesh")
+    Attributes:
+        name: Human-readable alias (e.g. ``production``, ``staging``).
+        provider_name: acme.sh DNS API name (e.g. ``cloudflare``).
+        env_vars_file_path: Path to a file containing the DNS provider's
+            environment variables / credentials.
+    """
+
+    name: str = Field(min_length=1)
+    provider_name: str = Field(min_length=1)
+    env_vars_file_path: Path
+
+
+class AcmeAccountConfig(BaseModel):
+    """ACME account configuration.
+
+    Attributes:
+        name: Human-readable alias (e.g. ``letsencrypt-production``).
+        server_url: ACME directory URL (e.g. Let's Encrypt prod/staging,
+            ZeroSSL, Buypass).
+        account_key_path: Filesystem path to the account key managed by
+            acme.sh.  Defaults to a path inside the configured home_dir.
+    """
+
+    name: str = Field(min_length=1)
+    server_url: str = Field(
+        default="https://acme-v02.api.letsencrypt.org/directory", min_length=1
+    )
+    account_key_path: Path | None = None
 
 
 class RenewalConfig(BaseModel):
@@ -49,7 +75,6 @@ class RenewalConfig(BaseModel):
 
     window_days: int = Field(default=30, ge=1)
     max_retries: int = Field(default=3, ge=0)
-
 
 class AppSettings(BaseModel):
     """Top-level application settings loaded from config.yaml.
@@ -60,14 +85,76 @@ class AppSettings(BaseModel):
         deployment: Where certificates are written on disk.
         acme: Path to the acme.sh binary and its state directory.
         renewal: Scheduling parameters for automatic renewals.
+        dns_providers: Configured DNS provider aliases.
+        acme_accounts: Configured ACME account references.
     """
-
     log: LogConfig = Field(default_factory=LogConfig)
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
     deployment: DeploymentConfig = Field(default_factory=DeploymentConfig)
     acme: AcmeConfig = Field(default_factory=AcmeConfig)
     renewal: RenewalConfig = Field(default_factory=RenewalConfig)
+    dns_providers: list[DnsProviderConfig] = Field(default_factory=list)
+    acme_accounts: list[AcmeAccountConfig] = Field(default_factory=list)
 
+    def validate(self) -> None:
+        """Validate configuration at startup.
+
+        Performs runtime checks that cannot be expressed with Pydantic field
+        constraints alone (cross-field references, filesystem existence, etc.).
+
+        Raises:
+            ValueError: When required configuration is missing or invalid.
+        """
+        errors = []
+
+        # Database URL must look like a valid DSN
+        if not self.database.url.startswith(("sqlite", "postgresql")):
+            errors.append(
+                f"database.url must start with 'sqlite' or 'postgresql', "
+                f"got: {self.database.url!r}"
+            )
+
+        # Deployment directory should exist (or be creatable)
+        if not self.deployment.directory.exists():
+            try:
+                self.deployment.directory.mkdir(parents=True, exist_ok=True)
+            except OSError as exc:
+                errors.append(
+                    f"deployment.directory '{self.deployment.directory}' "
+                    f"does not exist and could not be created: {exc}"
+                )
+
+        # ACME home directory should exist (or be creatable)
+        if not self.acme.home_dir.exists():
+            try:
+                self.acme.home_dir.mkdir(parents=True, exist_ok=True)
+            except OSError as exc:
+                errors.append(
+                    f"acme.home_dir '{self.acme.home_dir}' "
+                    f"does not exist and could not be created: {exc}"
+                )
+
+        # Check for duplicate DNS provider names
+        provider_names = [p.name for p in self.dns_providers]
+        if len(provider_names) != len(set(provider_names)):
+            errors.append("dns_providers contains duplicate 'name' values")
+
+        # Check for duplicate ACME account names
+        account_names = [a.name for a in self.acme_accounts]
+        if len(account_names) != len(set(account_names)):
+            errors.append("acme_accounts contains duplicate 'name' values")
+
+        # DNS provider env var files should exist (warn-only at startup;
+        # hard-fail when first used). This is informational.
+        for provider in self.dns_providers:
+            if not provider.env_vars_file_path.exists():
+                errors.append(
+                    f"dns_provider '{provider.name}': env_vars_file_path "
+                    f"'{provider.env_vars_file_path}' does not exist"
+                )
+
+        if errors:
+            raise ValueError("\n".join(errors))
 
 def load_config(path: Path | None = None) -> AppSettings:
     """Load and validate configuration from a YAML file.

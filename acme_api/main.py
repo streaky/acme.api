@@ -13,22 +13,32 @@ from typing import AsyncGenerator
 import uvicorn
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from acme_api.config import AppSettings, load_config
+from acme_api.logging import setup_logging
+from acme_api.middleware import RequestIdMiddleware
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     """Application lifespan handler.
 
-    Starts structured logging on startup; nothing to tear down yet.
+    Configures structured logging and validates settings on startup.
     """
     settings = app.state.settings
-    log_level_name: str = getattr(settings.log, "level", "INFO")
-    logging.basicConfig(level=getattr(logging, log_level_name), format="%(asctime)s %(levelname)s %(message)s")
-    logging.info("acme.api starting up")
+    # Run config validation before anything else
+    settings.validate()
+    # Configure structured logging according to settings
+    setup_logging(level=settings.log.level, format_type=settings.log.format)
+    root_logger = logging.getLogger(__name__)
+    root_logger.info(
+        "acme.api starting up | db=%s deploy_dir=%s",
+        settings.database.url,
+        settings.deployment.directory,
+    )
     yield
-    logging.info("acme.api shutting down")
+    root_logger.info("acme.api shutting down")
 
 
 def create_app(settings: AppSettings | None = None) -> FastAPI:
@@ -56,6 +66,9 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
 
     app.state.settings = settings
 
+    # Middleware: request ID injection (outermost)
+    app.add_middleware(RequestIdMiddleware)
+
     @app.get("/health", tags=["Health"])
     async def health() -> dict[str, str]:
         """Liveness probe — always returns 200 when the process is running."""
@@ -74,15 +87,20 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
 def main() -> None:
     """CLI entry point — loads config and launches uvicorn."""
     settings = load_config()
-    level: str = getattr(settings.log, "level", "INFO")
-    logging.basicConfig(level=getattr(logging, level), format="%(asctime)s %(levelname)s %(message)s")
+    setup_logging(level=settings.log.level, format_type=settings.log.format)
+
+    logging.getLogger(__name__).info(
+        "launching uvicorn | host=0.0.0.0 port=%s level=%s",
+        8000,
+        settings.log.level.lower(),
+    )
 
     uvicorn.run(
         "acme_api.main:create_app",
         factory=True,
         host="0.0.0.0",
         port=8000,
-        log_level=level.lower(),
+        log_level=settings.log.level.lower(),
     )
 
 
