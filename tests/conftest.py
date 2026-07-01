@@ -17,6 +17,12 @@ if str(ROOT) not in sys.path:
 
 
 @pytest.fixture()
+def anyio_backend() -> str:
+    """Run AnyIO tests on asyncio only."""
+    return "asyncio"
+
+
+@pytest.fixture()
 def app(tmp_path: Path) -> FastAPI:
     """Create a FastAPI app with an isolated temporary database path."""
     from acme_api.config import AppSettings, DatabaseConfig, DeploymentConfig

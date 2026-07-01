@@ -21,7 +21,7 @@ acme:
 renewal:
   enabled: true
   check_interval_hours: 24
-  renewal_window_days: 30
+  window_days: 30
   max_retries: 3
 
 # DNS provider aliases referenced by name in the API.

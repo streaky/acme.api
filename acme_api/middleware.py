@@ -35,8 +35,10 @@ class RequestIdMiddleware:
             await self.app(scope, receive, send)
             return
 
-        rid = str(uuid4())
+        rid = self._get_request_id(scope)
         token = _request_id_ctxvar.set(rid)
+        state = scope.setdefault("state", {})
+        state["request_id"] = rid
 
         # Wrap send to inject the X-Request-ID response header
         headers_sent = False
@@ -58,3 +60,14 @@ class RequestIdMiddleware:
             await self.app(scope, receive, wrapped_send)
         finally:
             _request_id_ctxvar.reset(token)
+
+    @staticmethod
+    def _get_request_id(scope: dict[str, Any]) -> str:
+        """Return the incoming request ID header or generate a new ID."""
+        headers = cast(list[tuple[bytes, bytes]], scope.get("headers", []))
+        for key, value in headers:
+            if key.lower() == b"x-request-id":
+                decoded = value.decode("latin-1").strip()
+                if decoded:
+                    return decoded
+        return str(uuid4())

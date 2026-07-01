@@ -47,11 +47,9 @@ dev = [
     "isort",
     "mypy",
     "pytest",
-    "pytest-asyncio",
     "pytest-cov",
     "pylint",
     "types-PyYAML",
-    "httpx",
 ]
 
 [project.scripts]
@@ -98,9 +96,10 @@ filterwarnings = []
 addopts = [
     "-vvv",
     "--tb=short",
+    "-p",
+    "no:asyncio",
     "--cov-report=term",
 ]
-asyncio_mode = "auto"
 
 [tool.mypy]
 python_version = "3.14"

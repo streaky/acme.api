@@ -69,6 +69,18 @@ class TestJSONFormatter:
         assert data["user"] == "admin"
         assert data["action"] == "login"
 
+    def test_includes_standard_logging_extra_fields(self) -> None:
+        fmt = JSONFormatter()
+        record = logging.LogRecord(
+            name="test", level=logging.INFO, pathname="", lineno=1,
+            msg="hello", args=(), exc_info=None,
+        )
+        record.cert_id = "cert-123"
+
+        data = json.loads(fmt.format(record))
+
+        assert data["cert_id"] == "cert-123"
+
     def test_includes_exception_info(self) -> None:
         fmt = JSONFormatter()
         exc = ValueError("oops")

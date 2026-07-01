@@ -23,7 +23,6 @@ annotated-types==0.7.0
 anyio==4.14.1
     # via
     #   -c requirements.txt
-    #   httpx
     #   httpx2
     #   starlette
     #   watchfiles
@@ -41,10 +40,6 @@ bcrypt==5.0.0
     #   passlib
 black==26.5.1
     # via acme.api (pyproject.toml)
-certifi==2026.6.17
-    # via
-    #   httpcore
-    #   httpx
 click==8.4.2
     # via
     #   -c requirements.txt
@@ -67,11 +62,8 @@ greenlet==3.5.3
 h11==0.16.0
     # via
     #   -c requirements.txt
-    #   httpcore
     #   httpcore2
     #   uvicorn
-httpcore==1.0.9
-    # via httpx
 httpcore2==2.5.0
     # via
     #   -c requirements.txt
@@ -80,8 +72,6 @@ httptools==0.8.0
     # via
     #   -c requirements.txt
     #   uvicorn
-httpx==0.28.1
-    # via acme.api (pyproject.toml)
 httpx2==2.5.0
     # via
     #   -c requirements.txt
@@ -90,7 +80,6 @@ idna==3.18
     # via
     #   -c requirements.txt
     #   anyio
-    #   httpx
     #   httpx2
 iniconfig==2.3.0
     # via pytest
@@ -158,10 +147,7 @@ pylint==4.0.6
 pytest==8.4.2
     # via
     #   acme.api (pyproject.toml)
-    #   pytest-asyncio
     #   pytest-cov
-pytest-asyncio==0.26.0
-    # via acme.api (pyproject.toml)
 pytest-cov==7.1.0
     # via acme.api (pyproject.toml)
 python-dotenv==1.2.2

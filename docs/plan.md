@@ -1,20 +1,20 @@
 # Implementation Plan — acme.api v1
 
 > Derived from `docs/outline.md`. Targets Python 3.14, strict mypy, 80% per-file coverage gate.
-> Greenfield codebase: `acme_api/` and `tests/` are currently empty. Infrastructure (Makefile, pyproject.toml) exists.
+> Phase 0/1 foundation exists: package skeleton, config loading, structured logging, request IDs, health endpoint, and tests are wired.
 
 ---
 
 ## Phase 0 — Dependencies & Project Wiring
 
-**Goal:** Resolve the runtime dependency list and wire a working entry point so `make dev` + `make test` passes on an empty package.
+**Goal:** Resolve the runtime dependency list and wire a working entry point so `make dev` + `make test` passes on the package foundation.
 
 - Update `pyproject.toml` `[project.dependencies]`:
   - FastAPI, Uvicorn (ASGI server)
   - SQLAlchemy 2.x (async SQLite)
   - APScheduler (renewal jobs)
   - Pydantic Settings (`pydantic-settings`) — config loading beyond flat YAML
-  - HTTPX (webhook delivery; acme.sh subprocess parsing is local but webhooks are HTTP)
+  - HTTPX2 (webhook delivery; acme.sh subprocess parsing is local but webhooks are HTTP)
   - Prometheus Client (`prometheus-client`)
   - Passlib + bcrypt (API key hashing)
   - `aiofiles` (async filesystem writes for atomic deployment)
@@ -25,7 +25,7 @@
   - `tests/conftest.py` (shared pytest fixtures, async support via anyio)
 - Create placeholder `GET /health` returning `{"status": "ok"}` to verify the pipeline.
 
-**Acceptance:** `make combined-check` passes; Docker build succeeds with a health endpoint responding 200 OK.
+**Acceptance:** `make combined-check` passes; health endpoint responds 200 OK in tests.
 
 ---
 
@@ -37,31 +37,56 @@
   - Pydantic model representing the full config schema (ACME paths, SQLite DSN, cert deployment dir, DNS providers, ACME accounts, log level).
   - Config loader reads `config.yaml` from a configurable path (`ACME_API_CONFIG` env var).
   - Validation on startup: reject missing required fields with clear errors.
+  - Unknown config keys are rejected so stale examples or typos fail fast.
+  - Missing config files fail fast instead of silently falling back to defaults.
+  - Runtime directory creation is separate from config validation.
 - Structured JSON logging setup (`acme_api/logging.py`):
   - JSON-formatted records to stdout and optionally to file.
   - Configurable log level via config.
-  - Request ID context propagation (middleware injects per-request correlation ID).
+  - Request ID context propagation (middleware preserves inbound `X-Request-ID` or injects a new per-request correlation ID).
 - Example `config.yaml` shipped in the repo root as a reference (`config.example.yaml`).
 
 **Acceptance:** App starts with valid/invalid configs; structured logs emitted for lifecycle events; config validation errors surfaced at startup.
 
 ---
 
+## v1 Persistence Boundary
+
+Mutable runtime state lives in SQLite. Administrator-managed external integrations live in `config.yaml`.
+
+- **Config-owned in v1:**
+  - ACME accounts.
+  - DNS provider aliases and credential file paths.
+  - Initial/bootstrap API keys, if needed.
+- **DB-owned in v1:**
+  - Certificates and their lifecycle state.
+  - Renewal attempts / scheduling metadata.
+  - Webhook configurations.
+  - Event/audit log.
+  - API keys, if API-managed key lifecycle is implemented in v1.
+
+Accounts and providers are exposed through read-only API endpoints, but are not API-mutated in v1.
+
+---
+
 ## Phase 2 — Database Layer & Data Models
 
-**Goal:** SQLite-backed ORM models with migrations for all persistent entities defined in the outline (certificates, accounts, providers, renewal schedule, webhook configuration, audit log).
+**Goal:** SQLite-backed async database foundation and migrations for mutable runtime state.
 
 - `acme_api/db.py`: async SQLAlchemy engine setup, session factory, connection pooling.
+- SQLite pragmas for service usage:
+  - WAL mode.
+  - Foreign keys enabled.
+  - Conservative pool configuration.
+- Alembic integration for migrations: initial migration covering foundation tables.
 - `acme_api/models/` package:
   - **Certificate**: id (UUID), name, domains (JSON array), acme_account_ref, dns_provider_ref, key_algorithm, expiry_date, status (Pending | Issuing | Valid | Renewing | Failed | Revoked), created_at, updated_at.
-  - **ACMEAccount**: name, server_url (LE prod/staging, ZeroSSL, Buypass), account_key_path (filesystem path managed by acme.sh).
-  - **DNSProvider**: name, provider_name (acme.sh provider alias e.g. `cloudflare`), env_vars_file_path (path to file with DNS credentials — avoids passing secrets in memory from the API layer).
-  - **WebhookConfig**: id, url, events (JSON array of event types it subscribes to), secret (for HMAC signing).
   - **Event** (audit log): id, timestamp, event_type, certificate_ref (nullable), details (JSON), status.
-- Alembic integration for migrations: initial migration covering all tables.
-- Pydantic schemas (`acme_api/schemas/`) mirroring each model for API serialization with validators (domain format, RFC-compliant expiry parsing).
+  - **RenewalAttempt** or renewal metadata table: certificate_ref, attempted_at, status, error category/details, next_retry_at.
+- Pydantic schemas (`acme_api/schemas/`) for certificate/event serialization with validators (domain format, RFC-compliant expiry parsing).
+- Config-backed read schemas for ACME accounts and DNS providers.
 
-**Acceptance:** All models create/migrate cleanly; CRUD operations on every entity work via async session; schemas serialize/deserialize round-trip.
+**Acceptance:** DB engine/session wiring works; migrations create all Phase 2 tables cleanly; certificate/event CRUD works via async session; schemas serialize/deserialize round-trip; config-owned accounts/providers are available through typed read models.
 
 ---
 
@@ -81,16 +106,34 @@
   - Error handling: distinguishes transient failures (DNS propagation) from terminal errors (account invalid).
 - Configuration-driven ACME home directory (`/acmesh` in container) mounted persistently.
 
-**Acceptance:** Backend can register an account against LE staging; issue and renew a certificate with DNS-01; parse expiry dates correctly. Mock backend available for tests without acme.sh installed.
+**Acceptance:** Mock subprocess tests cover command construction, success parsing, expiry parsing, and transient/terminal error mapping. Mock backend available for API tests without acme.sh installed. Optional integration test can register/issue/renew against Pebble or LE staging when DNS credentials are available.
 
 ---
 
-## Phase 4 — Core API Endpoints (Certificates, Accounts, Providers, Events)
+## Phase 4 — Authentication & Authorization (API Keys)
+
+**Goal:** API key-based auth with role-based access control (Admin, Operator, Read Only). Auth is introduced before the user-facing API endpoints so routes, tests, and OpenAPI metadata are built around the final access model.
+
+- `acme_api/auth/`:
+  - **APIKey model** if API-managed key lifecycle is in v1: id, name, hashed_key, role (`admin`, `operator`, `readonly`), created_at, expires_at (nullable).
+  - Bootstrap/config keys may be defined in `config.yaml`; DB-backed keys can be added for API-managed lifecycle.
+  - **Middleware/dependency** validates `Authorization: Bearer <key>` header and extracts role.
+  - **RBAC enforcement** via FastAPI dependencies:
+    - Admin: all endpoints.
+    - Operator: create/renew certificates, view status, view events.
+    - Read Only: GET endpoints only.
+  - API key hashing via Passlib + bcrypt for storage.
+
+**Acceptance:** Unauthenticated requests return 401; insufficient role returns 403; role dependencies are reusable by later route modules; auth behavior is covered by an RBAC test matrix.
+
+---
+
+## Phase 5 — Core API Endpoints (Certificates, Accounts, Providers, Events)
 
 **Goal:** Full CRUD REST API backed by the database layer and ACME backend abstraction. OpenAPI metadata on all endpoints per outline spec.
 
 ### Certificates (`/v1/certificates`)
-- `POST /v1/certificates` — create certificate request (name, domains, acme_account, dns_provider, key_algorithm). Transitions: Pending → Issuing → Valid or Failed. Triggers immediate issuance via backend.
+- `POST /v1/certificates` — create certificate request (name, domains, acme_account, dns_provider, key_algorithm). Creates a DB record and starts issuance work. Returns `202 Accepted` with certificate id/status instead of blocking on DNS propagation.
 - `GET /v1/certificates` — list with pagination (`?offset=&limit=`), filter by status, domain search.
 - `GET /v1/certificates/{id}` — single certificate detail including expiry and status.
 - `DELETE /v1/certificates/{id}` — soft delete (mark as Revoked; remove from renewal schedule).
@@ -108,13 +151,15 @@
 ### Implementation Details
 - FastAPI router structure: `acme_api/routes/certificates.py`, `accounts.py`, `providers.py`, `events.py`.
 - Dependency injection for DB sessions and backend instances.
+- Auth/RBAC dependencies applied at route level.
+- Issuance state transitions: Pending → Issuing → Valid or Failed.
 - OpenAPI metadata on all endpoints (tags, summary, responses).
 
 **Acceptance:** All endpoints respond with correct status codes; input validation via Pydantic schemas; database CRUD wired end-to-end; OpenAPI docs at `/docs` reflect the API.
 
 ---
 
-## Phase 5 — Certificate Filesystem Deployment
+## Phase 6 — Certificate Filesystem Deployment
 
 **Goal:** Atomic deployment of certificate artifacts to the shared filesystem (`/certificates/<domain>/`).
 
@@ -123,7 +168,7 @@
     1. Write `.pem.tmp` files to a temp directory in the same filesystem.
     2. `os.fsync()` each file handle.
     3. `os.rename()` (atomic on POSIX) to final paths.
-    4. Emit webhook event (Phase 7 hook).
+    4. Emit webhook event (Phase 8 hook).
   - File layout per domain:
     ```
     /certificates/<primary_domain>/
@@ -139,7 +184,7 @@
 
 ---
 
-## Phase 6 — Renewal Scheduler
+## Phase 7 — Renewal Scheduler
 
 **Goal:** Automatic renewal of certificates before expiry using APScheduler. State tracked internally per outline (Pending → Issuing → Valid → Renewing → Valid/Failed).
 
@@ -155,35 +200,18 @@
 
 ---
 
-## Phase 7 — Webhook Notifications
+## Phase 8 — Webhook Notifications
 
 **Goal:** HTTP webhook delivery for all lifecycle events with HMAC signing and retries. Events per outline: `certificate.created`, `.issued`, `.renewed`, `.failed`, `.expiring`, `.revoked`.
 
+- `WebhookConfig` DB model: id, url, events (JSON array of event types it subscribes to), secret (for HMAC signing), created_at, updated_at, enabled.
 - `acme_api/webhooks.py`:
   - Payload structure per outline spec (event, certificate name, expiry, domains).
   - Per-webhook HMAC-SHA256 signature in `X-Webhook-Signature` header.
-  - Async HTTP delivery via HTTPX with timeout and retry logic (configurable: max retries, backoff).
+  - Async HTTP delivery via HTTPX2 with timeout and retry logic (configurable: max retries, backoff).
   - Failed deliveries logged to the Event table for auditability.
 
 **Acceptance:** Webhooks fire on all lifecycle events; payload matches spec; HMAC signature verifiable by consumer; failed deliveries retried and logged.
-
----
-
-## Phase 8 — Authentication & Authorization (API Keys)
-
-**Goal:** API key-based auth with role-based access control (Admin, Operator, Read Only). Per outline: v1 supports API Keys only.
-
-- `acme_api/auth/`:
-  - **APIKey model**: id, name, hashed_key, role (`admin`, `operator`, `readonly`), created_at, expires_at (nullable).
-  - For v1, keys defined in `config.yaml` are sufficient; the DB model is prepared for future API-managed key lifecycle.
-  - **Middleware**: validates `Authorization: Bearer <key>` header; extracts role from config or DB lookup.
-  - **RBAC enforcement** via FastAPI dependencies:
-    - Admin: all endpoints (CRUD on certificates, accounts, providers, webhooks).
-    - Operator: create/renew certificates, view status, view events.
-    - Read Only: GET endpoints only.
-  - API key hashing via Passlib + bcrypt for storage.
-
-**Acceptance:** Unauthenticated requests return 401; insufficient role returns 403; all roles can access their permitted endpoints.
 
 ---
 
@@ -250,7 +278,7 @@
   - **Docker smoke test**: container starts, health checks pass, API responds.
 - Fixtures in `tests/fixtures/`: sample config.yaml, mock DNS provider env files, test certificate data.
 
-**Acceptance:** Integration tests run via `make test`; coverage gate met; E2E flow produces a real (staging) certificate deployed to the filesystem.
+**Acceptance:** Integration tests run via `make test`; coverage gate met; default E2E flow works with mock/Pebble-compatible backends; real staging ACME tests are optional and gated on DNS credentials.
 
 ---
 
@@ -259,31 +287,28 @@
 Phases with no hard dependencies can be worked in parallel:
 
 ```
-Phase 0 ──┐
-          ├──> Phase 1 ──> Phase 2 ──┐
-          │                          ├──> Phase 3 ──> Phase 4
-          │                          │
-          └──────────────────────────┘
-                                        │
-                              Phase 5   │   (parallel with Phase 6)
-Phase 5 ──────────────────────/         │   Phase 6 ────────────────\
-                                       ├──> Phase 7 ──────────────\
-                                                                  │
-                                    Phase 8 ──────────────────────┤
-                                                                  ├──> Phase 9
-                                   Phase 10 (can start after 4)   │
-                                                                  │
-Phase 11 ←────────────────────────────────────────────────────────/
-                                                                    \
-Phase 12 ←──────────────────────────────────────────────────────────-/
+Phase 0 -> Phase 1 -> Phase 2
+                     ├──> Phase 3
+                     └──> Phase 4
+
+Phase 2 + Phase 3 + Phase 4 -> Phase 5
+
+Phase 5 -> Phase 6
+        -> Phase 7
+        -> Phase 8
+        -> Phase 9
+        -> Phase 10
+
+Phase 6 + Phase 7 + Phase 8 + Phase 9 + Phase 10 -> Phase 11 -> Phase 12
 ```
 
 **Strict ordering:**
 - Phase 0 → Phase 1 → Phase 2 (config and DB must exist before anything else).
-- Phase 2 + Phase 3 → Phase 4 (API needs both DB models and backend abstraction).
-- Phase 4 → Phase 5, 6, 7 (deployment, scheduling, webhooks all act on certificates created by the API).
-- Phase 5–9 can proceed in parallel once Phase 4 is complete.
-- Phase 10 depends on a working application (Phase 4+).
+- Phase 2 → Phase 4 (auth needs config and, if DB-backed keys are enabled, DB foundation).
+- Phase 2 + Phase 3 + Phase 4 → Phase 5 (API needs DB models, backend abstraction, and final auth dependencies).
+- Phase 5 → Phase 6, 7, 8 (deployment, scheduling, webhooks all act on certificates created by the API).
+- Phase 6–10 can proceed in parallel once Phase 5 is complete.
+- Phase 10 depends on a working application (Phase 5+).
 - Phase 11 and 12 are final polish — depend on everything else.
 
 ---
@@ -295,16 +320,16 @@ Phase 12 ←──────────────────────�
 | 0     | Unit: entry point, config parse | 80% |
 | 1     | Unit: config validation, log formatting | 80% |
 | 2     | Unit + Integration: ORM CRUD, migrations, schema validation | 90% |
-| 3     | Unit (mock subprocess) + Integration (staging acme.sh) | 80% / 70% |
-| 4     | Integration: API endpoints via TestClient | 85% |
-| 5     | Unit: atomic write, permissions, metadata JSON | 90% |
-| 6     | Unit (mock backend): scheduling logic, state transitions | 90% |
-| 7     | Unit (mock HTTPX): payload construction, HMAC, retry | 85% |
-| 8     | Integration: auth middleware, RBAC matrix | 90% |
+| 3     | Unit: mock subprocess command construction, parsing, error mapping | 85% |
+| 4     | Integration: auth middleware/dependencies, RBAC matrix | 90% |
+| 5     | Integration: API endpoints via TestClient | 85% |
+| 6     | Unit: atomic write, permissions, metadata JSON | 90% |
+| 7     | Unit (mock backend): scheduling logic, state transitions | 90% |
+| 8     | Unit (mock HTTPX2): payload construction, HMAC, retry | 85% |
 | 9     | Unit: metric counters, health checks | 85% |
 | 10    | Smoke test: container build + startup | — |
 | 11    | Regression: full `make combined-check` | 80% |
-| 12    | E2E: full lifecycle against staging ACME | 70% |
+| 12    | E2E: full lifecycle against mock/Pebble; optional staging ACME | 70% |
 
 ---
 

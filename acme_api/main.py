@@ -14,7 +14,7 @@ import uvicorn
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 
-from acme_api.config import AppSettings, load_config
+from acme_api.config import AppSettings, load_config, prepare_runtime_paths
 from acme_api.logging import setup_logging
 from acme_api.middleware import RequestIdMiddleware
 
@@ -26,7 +26,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     Configures structured logging and validates settings on startup.
     """
     settings = app.state.settings
-    # Run config validation before anything else
+    # Prepare directories before validation checks that they are usable.
+    prepare_runtime_paths(settings)
     settings.check()
     # Configure structured logging according to settings
     setup_logging(level=settings.log.level, format_type=settings.log.format)

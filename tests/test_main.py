@@ -58,6 +58,7 @@ class TestCreateApp:
 
 
 class TestLifespan:
+    @pytest.mark.anyio
     async def test_lifespan_yields(self, settings: AppSettings) -> None:
         """Verify the lifespan context manager yields once."""
         app = create_app(settings=settings)

@@ -12,24 +12,30 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
-class LogConfig(BaseModel):
+class StrictConfigModel(BaseModel):
+    """Base config model that rejects unknown keys."""
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class LogConfig(StrictConfigModel):
     """Logging configuration."""
 
     level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
     format: Literal["json", "text"] = "json"
 
 
-class DatabaseConfig(BaseModel):
+class DatabaseConfig(StrictConfigModel):
     """SQLite database configuration."""
 
     url: str = "sqlite+aiosqlite:///./data/acme.db"
     pool_size: int = Field(default=5, ge=1)
 
 
-class DeploymentConfig(BaseModel):
+class DeploymentConfig(StrictConfigModel):
     """Certificate filesystem deployment configuration."""
 
     directory: Path = Path("/certificates")
@@ -37,7 +43,7 @@ class DeploymentConfig(BaseModel):
     permissions_key: int = 0o600
 
 
-class DnsProviderConfig(BaseModel):
+class DnsProviderConfig(StrictConfigModel):
     """DNS provider alias configuration.
 
     Attributes:
@@ -52,7 +58,7 @@ class DnsProviderConfig(BaseModel):
     env_vars_file_path: Path
 
 
-class AcmeAccountConfig(BaseModel):
+class AcmeAccountConfig(StrictConfigModel):
     """ACME account configuration.
 
     Attributes:
@@ -70,21 +76,23 @@ class AcmeAccountConfig(BaseModel):
     account_key_path: Path | None = None
 
 
-class AcmeConfig(BaseModel):
+class AcmeConfig(StrictConfigModel):
     """acme.sh binary and state directory configuration."""
 
     binary_path: str = "/usr/local/bin/acme.sh"
     home_dir: Path = Path("/acmesh")
 
 
-class RenewalConfig(BaseModel):
+class RenewalConfig(StrictConfigModel):
     """Automatic renewal scheduling configuration."""
 
+    enabled: bool = True
+    check_interval_hours: int = Field(default=24, ge=1)
     window_days: int = Field(default=30, ge=1)
     max_retries: int = Field(default=3, ge=0)
 
 
-class AppSettings(BaseModel):
+class AppSettings(StrictConfigModel):
     """Top-level application settings loaded from config.yaml.
 
     Attributes:
@@ -122,25 +130,17 @@ class AppSettings(BaseModel):
                 f"got: {self.database.url!r}"
             )
 
-        # Deployment directory should exist (or be creatable)
+        # Deployment directory should exist. Creation is handled separately so
+        # validation remains free of runtime side effects.
         if not self.deployment.directory.exists():
-            try:
-                self.deployment.directory.mkdir(parents=True, exist_ok=True)
-            except OSError as exc:
-                errors.append(
-                    f"deployment.directory '{self.deployment.directory}' "
-                    f"does not exist and could not be created: {exc}"
-                )
+            errors.append(
+                f"deployment.directory '{self.deployment.directory}' does not exist"
+            )
 
-        # ACME home directory should exist (or be creatable)
+        # ACME home directory should exist. Creation is handled separately so
+        # validation remains free of runtime side effects.
         if not self.acme.home_dir.exists():
-            try:
-                self.acme.home_dir.mkdir(parents=True, exist_ok=True)
-            except OSError as exc:
-                errors.append(
-                    f"acme.home_dir '{self.acme.home_dir}' "
-                    f"does not exist and could not be created: {exc}"
-                )
+            errors.append(f"acme.home_dir '{self.acme.home_dir}' does not exist")
 
         # Check for duplicate DNS provider names
         provider_names = [p.name for p in self.dns_providers]
@@ -165,6 +165,12 @@ class AppSettings(BaseModel):
             raise ValueError("\n".join(errors))
 
 
+def prepare_runtime_paths(settings: AppSettings) -> None:
+    """Create runtime directories required by the application."""
+    settings.deployment.directory.mkdir(parents=True, exist_ok=True)
+    settings.acme.home_dir.mkdir(parents=True, exist_ok=True)
+
+
 def load_config(path: Path | None = None) -> AppSettings:
     """Load and validate configuration from a YAML file.
 
@@ -186,9 +192,10 @@ def load_config(path: Path | None = None) -> AppSettings:
         else:
             path = Path("./config.yaml")
 
-    raw: dict[str, Any] = {}
-    if path.exists():
-        with open(path, encoding="utf-8") as fh:
-            raw = yaml.safe_load(fh) or {}
+    if not path.exists():
+        raise FileNotFoundError(f"config file not found: {path}")
+
+    with open(path, encoding="utf-8") as fh:
+        raw: dict[str, Any] = yaml.safe_load(fh) or {}
 
     return AppSettings(**raw)

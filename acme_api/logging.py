@@ -13,6 +13,8 @@ from uuid import uuid4
 # Thread-safe storage for the current request's correlation ID
 request_id: ContextVar[str | None] = ContextVar("request_id", default=None)
 
+_STANDARD_LOG_RECORD_ATTRS = set(logging.makeLogRecord({}).__dict__)
+
 
 class JSONFormatter(logging.Formatter):
     """A logging formatter that outputs in JSON format."""
@@ -27,13 +29,18 @@ class JSONFormatter(logging.Formatter):
             "request_id": request_id.get(),
         }
 
-        if hasattr(record, "extra"):
-            log_data.update(record.extra)
+        for key, value in record.__dict__.items():
+            if key not in _STANDARD_LOG_RECORD_ATTRS and key != "extra":
+                log_data[key] = value
+
+        extra_data: Any = getattr(record, "extra", None)
+        if isinstance(extra_data, dict):
+            log_data.update(extra_data)
 
         if record.exc_info:
             log_data["exception"] = self.formatException(record.exc_info)
 
-        return json.dumps(log_data)
+        return json.dumps(log_data, default=str)
 
 
 def setup_logging(level: str, format_type: str = "json") -> None:

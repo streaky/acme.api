@@ -17,6 +17,7 @@ from acme_api.config import (
     LogConfig,
     RenewalConfig,
     load_config,
+    prepare_runtime_paths,
 )
 
 
@@ -59,10 +60,13 @@ class TestAcmeConfig:
 class TestRenewalConfig:
     def test_defaults(self) -> None:
         cfg = RenewalConfig()
+        assert cfg.enabled is True
+        assert cfg.check_interval_hours == 24
         assert cfg.window_days == 30
 
     def test_custom_window(self) -> None:
-        cfg = RenewalConfig(window_days=60, max_retries=5)
+        cfg = RenewalConfig(check_interval_hours=12, window_days=60, max_retries=5)
+        assert cfg.check_interval_hours == 12
         assert cfg.window_days == 60
         assert cfg.max_retries == 5
 
@@ -120,10 +124,10 @@ class TestAppSettings:
 
 
 class TestLoadConfig:
-    def test_missing_file_returns_defaults(self, tmp_path: Path) -> None:
-        """When no config file exists at the given path, return schema defaults."""
-        cfg = load_config(tmp_path / "nope.yaml")
-        assert isinstance(cfg, AppSettings)
+    def test_missing_file_raises(self, tmp_path: Path) -> None:
+        """Missing config paths fail fast."""
+        with pytest.raises(FileNotFoundError):
+            load_config(tmp_path / "nope.yaml")
 
     def test_load_valid_yaml(self, tmp_path: Path) -> None:
         config_file = tmp_path / "config.yaml"
@@ -163,6 +167,14 @@ class TestLoadConfig:
         with pytest.raises(ValueError):
             load_config(config_file)
 
+    def test_unknown_key_raises(self, tmp_path: Path) -> None:
+        config_file = tmp_path / "bad.yaml"
+        with open(config_file, "w") as fh:
+            yaml.dump({"renewal": {"renewal_window_days": 30}}, fh)
+
+        with pytest.raises(ValueError, match="renewal_window_days"):
+            load_config(config_file)
+
     def test_fallback_to_cwd(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         config_file = tmp_path / "config.yaml"
         with open(config_file, "w") as fh:
@@ -182,7 +194,30 @@ class TestAppSettingsValidate:
             acme=AcmeConfig(home_dir=tmp_path / "acmesh"),
         )
         # Should not raise
+        prepare_runtime_paths(settings)
         settings.check()
+
+    def test_prepare_runtime_paths_creates_dirs(self, tmp_path: Path) -> None:
+        settings = AppSettings(
+            database=DatabaseConfig(url=f"sqlite+aiosqlite:///{tmp_path}/test.db"),
+            deployment=DeploymentConfig(directory=tmp_path / "certs"),
+            acme=AcmeConfig(home_dir=tmp_path / "acmesh"),
+        )
+
+        prepare_runtime_paths(settings)
+
+        assert settings.deployment.directory.is_dir()
+        assert settings.acme.home_dir.is_dir()
+
+    def test_validate_missing_runtime_dir(self, tmp_path: Path) -> None:
+        settings = AppSettings(
+            database=DatabaseConfig(url=f"sqlite+aiosqlite:///{tmp_path}/test.db"),
+            deployment=DeploymentConfig(directory=tmp_path / "missing-certs"),
+            acme=AcmeConfig(home_dir=tmp_path / "missing-acmesh"),
+        )
+
+        with pytest.raises(ValueError, match="deployment.directory"):
+            settings.check()
 
     def test_validate_duplicate_dns_provider_names(self, tmp_path: Path) -> None:
         settings = AppSettings(
@@ -200,6 +235,7 @@ class TestAppSettingsValidate:
                 ),
             ],
         )
+        prepare_runtime_paths(settings)
         with pytest.raises(ValueError, match="duplicate"):
             settings.check()
 
@@ -213,6 +249,7 @@ class TestAppSettingsValidate:
                 AcmeAccountConfig(name="dup", server_url="https://b.com"),
             ],
         )
+        prepare_runtime_paths(settings)
         with pytest.raises(ValueError, match="duplicate"):
             settings.check()
 
@@ -222,6 +259,7 @@ class TestAppSettingsValidate:
             deployment=DeploymentConfig(directory=tmp_path / "certs"),
             acme=AcmeConfig(home_dir=tmp_path / "acmesh"),
         )
+        prepare_runtime_paths(settings)
         with pytest.raises(ValueError, match="database.url"):
             settings.check()
 
@@ -237,5 +275,6 @@ class TestAppSettingsValidate:
                 ),
             ],
         )
+        prepare_runtime_paths(settings)
         with pytest.raises(ValueError, match="env_vars_file_path"):
             settings.check()

@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Callable, Generator
 
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from httpx import ASGITransport, AsyncClient
 
 from acme_api.config import AppSettings, DatabaseConfig, DeploymentConfig
@@ -60,6 +60,35 @@ async def test_middleware_different_id_per_request(tmp_path: Path) -> None:
     h1 = r1.headers["x-request-id"]
     h2 = r2.headers["x-request-id"]
     assert h1 != h2
+
+
+@pytest.mark.anyio
+async def test_middleware_preserves_incoming_request_id(tmp_path: Path) -> None:
+    """Incoming X-Request-ID is used as the correlation ID."""
+    app = await _make_app(tmp_path)
+    transport = ASGITransport(app=app)
+
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.get("/health", headers={"X-Request-ID": "external-123"})
+
+    assert resp.headers["x-request-id"] == "external-123"
+
+
+@pytest.mark.anyio
+async def test_middleware_sets_request_state(tmp_path: Path) -> None:
+    """Request ID is available to handlers through request.state."""
+    app = await _make_app(tmp_path)
+
+    @app.get("/request-id")
+    async def request_id_route(request: Request) -> dict[str, str]:
+        return {"request_id": request.state.request_id}
+
+    transport = ASGITransport(app=app)
+
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.get("/request-id", headers={"X-Request-ID": "state-123"})
+
+    assert resp.json() == {"request_id": "state-123"}
 
 
 @pytest.mark.anyio
