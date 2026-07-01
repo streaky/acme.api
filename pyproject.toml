@@ -29,7 +29,7 @@ dependencies = [
     "aiosqlite",
     "apscheduler",
     "pydantic-settings",
-    "httpx",
+    "httpx2",
     "prometheus-client",
     "passlib[bcrypt]",
     "aiofiles",
@@ -79,6 +79,7 @@ disable = [
     "too-few-public-methods",
     "no-member",
     "unspecified-encoding",
+    "duplicate-code",
 ]
 
 [tool.flake8]

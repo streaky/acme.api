@@ -70,11 +70,19 @@ class AcmeAccountConfig(BaseModel):
     account_key_path: Path | None = None
 
 
+class AcmeConfig(BaseModel):
+    """acme.sh binary and state directory configuration."""
+
+    binary_path: str = "/usr/local/bin/acme.sh"
+    home_dir: Path = Path("/acmesh")
+
+
 class RenewalConfig(BaseModel):
     """Automatic renewal scheduling configuration."""
 
     window_days: int = Field(default=30, ge=1)
     max_retries: int = Field(default=3, ge=0)
+
 
 class AppSettings(BaseModel):
     """Top-level application settings loaded from config.yaml.
@@ -96,7 +104,7 @@ class AppSettings(BaseModel):
     dns_providers: list[DnsProviderConfig] = Field(default_factory=list)
     acme_accounts: list[AcmeAccountConfig] = Field(default_factory=list)
 
-    def validate(self) -> None:
+    def check(self) -> None:
         """Validate configuration at startup.
 
         Performs runtime checks that cannot be expressed with Pydantic field
@@ -155,6 +163,7 @@ class AppSettings(BaseModel):
 
         if errors:
             raise ValueError("\n".join(errors))
+
 
 def load_config(path: Path | None = None) -> AppSettings:
     """Load and validate configuration from a YAML file.

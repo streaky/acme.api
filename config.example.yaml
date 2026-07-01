@@ -1,0 +1,37 @@
+# acme.api — Example Configuration
+# Copy this file to `config.yaml` and adjust values for your environment.
+# Path: set ACME_API_CONFIG=/path/to/config.yaml (or leave unset; cwd is searched)
+
+log:
+  level: INFO          # DEBUG, INFO, WARNING, ERROR, CRITICAL
+  format: json         # json or text
+
+database:
+  url: sqlite+aiosqlite:///data/acme.db
+  pool_size: 5
+
+deployment:
+  directory: /certificates
+  permissions_key: 384 # 0o600 in decimal
+
+acme:
+  binary_path: /usr/local/bin/acme.sh
+  home_dir: /acmesh
+
+renewal:
+  enabled: true
+  check_interval_hours: 24
+  renewal_window_days: 30
+  max_retries: 3
+
+# DNS provider aliases referenced by name in the API.
+# Each provider must have a credentials file with acme.sh-compatible env vars.
+dns_providers:
+  - name: production
+    provider_name: cloudflare
+    env_vars_file_path: /secrets/cloudflare.env
+
+acme_accounts:
+  - name: letsencrypt-production
+    server_url: https://acme-v02.api.letsencrypt.org/directory
+    # account_key_path is optional; defaults to a path inside acme.home_dir

@@ -8,7 +8,12 @@ from unittest.mock import patch
 import pytest
 from fastapi.testclient import TestClient
 
-from acme_api.config import AppSettings, DatabaseConfig, DeploymentConfig
+from acme_api.config import (
+    AcmeConfig,
+    AppSettings,
+    DatabaseConfig,
+    DeploymentConfig,
+)
 from acme_api.main import create_app
 
 
@@ -17,6 +22,7 @@ def settings(tmp_path: Path) -> AppSettings:
     return AppSettings(
         database=DatabaseConfig(url=f"sqlite+aiosqlite:///{tmp_path}/test.db"),
         deployment=DeploymentConfig(directory=tmp_path / "certs"),
+        acme=AcmeConfig(home_dir=tmp_path / "acmesh"),
     )
 
 

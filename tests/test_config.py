@@ -8,10 +8,12 @@ import pytest
 import yaml
 
 from acme_api.config import (
+    AcmeAccountConfig,
     AcmeConfig,
     AppSettings,
     DatabaseConfig,
     DeploymentConfig,
+    DnsProviderConfig,
     LogConfig,
     RenewalConfig,
     load_config,
@@ -63,6 +65,44 @@ class TestRenewalConfig:
         cfg = RenewalConfig(window_days=60, max_retries=5)
         assert cfg.window_days == 60
         assert cfg.max_retries == 5
+
+
+class TestDnsProviderConfig:
+    def test_creation(self) -> None:
+        cfg = DnsProviderConfig(
+            name="production",
+            provider_name="cloudflare",
+            env_vars_file_path=Path("/data/creds/cloudflare.env"),
+        )
+        assert cfg.name == "production"
+        assert cfg.provider_name == "cloudflare"
+
+    def test_empty_name_fails(self) -> None:
+        with pytest.raises(ValueError):
+            DnsProviderConfig(
+                name="",
+                provider_name="cloudflare",
+                env_vars_file_path=Path("/data/env"),
+            )
+
+
+class TestAcmeAccountConfig:
+    def test_defaults(self) -> None:
+        cfg = AcmeAccountConfig(name="le-prod")
+        assert cfg.name == "le-prod"
+        assert cfg.server_url == "https://acme-v02.api.letsencrypt.org/directory"
+        assert cfg.account_key_path is None
+
+    def test_custom_server(self) -> None:
+        cfg = AcmeAccountConfig(
+            name="le-staging",
+            server_url="https://acme-staging-v02.api.letsencrypt.org/directory",
+        )
+        assert cfg.server_url == "https://acme-staging-v02.api.letsencrypt.org/directory"
+
+    def test_empty_name_fails(self) -> None:
+        with pytest.raises(ValueError):
+            AcmeAccountConfig(name="")
 
 
 class TestAppSettings:
@@ -132,3 +172,70 @@ class TestLoadConfig:
         monkeypatch.delenv("ACME_API_CONFIG", raising=False)
         cfg = load_config(path=config_file)
         assert cfg.renewal.window_days == 15
+
+
+class TestAppSettingsValidate:
+    def test_validate_passes_with_tmp_dirs(self, tmp_path: Path) -> None:
+        settings = AppSettings(
+            database=DatabaseConfig(url=f"sqlite+aiosqlite:///{tmp_path}/test.db"),
+            deployment=DeploymentConfig(directory=tmp_path / "certs"),
+            acme=AcmeConfig(home_dir=tmp_path / "acmesh"),
+        )
+        # Should not raise
+        settings.check()
+
+    def test_validate_duplicate_dns_provider_names(self, tmp_path: Path) -> None:
+        settings = AppSettings(
+            database=DatabaseConfig(url=f"sqlite+aiosqlite:///{tmp_path}/test.db"),
+            deployment=DeploymentConfig(directory=tmp_path / "certs"),
+            acme=AcmeConfig(home_dir=tmp_path / "acmesh"),
+            dns_providers=[
+                DnsProviderConfig(
+                    name="dup", provider_name="cf",
+                    env_vars_file_path=tmp_path / "a.env",
+                ),
+                DnsProviderConfig(
+                    name="dup", provider_name="route53",
+                    env_vars_file_path=tmp_path / "b.env",
+                ),
+            ],
+        )
+        with pytest.raises(ValueError, match="duplicate"):
+            settings.check()
+
+    def test_validate_duplicate_acme_account_names(self, tmp_path: Path) -> None:
+        settings = AppSettings(
+            database=DatabaseConfig(url=f"sqlite+aiosqlite:///{tmp_path}/test.db"),
+            deployment=DeploymentConfig(directory=tmp_path / "certs"),
+            acme=AcmeConfig(home_dir=tmp_path / "acmesh"),
+            acme_accounts=[
+                AcmeAccountConfig(name="dup", server_url="https://a.com"),
+                AcmeAccountConfig(name="dup", server_url="https://b.com"),
+            ],
+        )
+        with pytest.raises(ValueError, match="duplicate"):
+            settings.check()
+
+    def test_validate_bad_database_url(self, tmp_path: Path) -> None:
+        settings = AppSettings(
+            database=DatabaseConfig(url="mysql://localhost/db"),
+            deployment=DeploymentConfig(directory=tmp_path / "certs"),
+            acme=AcmeConfig(home_dir=tmp_path / "acmesh"),
+        )
+        with pytest.raises(ValueError, match="database.url"):
+            settings.check()
+
+    def test_validate_missing_env_vars_file(self, tmp_path: Path) -> None:
+        settings = AppSettings(
+            database=DatabaseConfig(url=f"sqlite+aiosqlite:///{tmp_path}/test.db"),
+            deployment=DeploymentConfig(directory=tmp_path / "certs"),
+            acme=AcmeConfig(home_dir=tmp_path / "acmesh"),
+            dns_providers=[
+                DnsProviderConfig(
+                    name="prod", provider_name="cf",
+                    env_vars_file_path=tmp_path / "missing.env",
+                ),
+            ],
+        )
+        with pytest.raises(ValueError, match="env_vars_file_path"):
+            settings.check()

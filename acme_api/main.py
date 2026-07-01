@@ -13,7 +13,6 @@ from typing import AsyncGenerator
 import uvicorn
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
-from starlette.middleware.base import BaseHTTPMiddleware
 
 from acme_api.config import AppSettings, load_config
 from acme_api.logging import setup_logging
@@ -28,7 +27,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     """
     settings = app.state.settings
     # Run config validation before anything else
-    settings.validate()
+    settings.check()
     # Configure structured logging according to settings
     setup_logging(level=settings.log.level, format_type=settings.log.format)
     root_logger = logging.getLogger(__name__)

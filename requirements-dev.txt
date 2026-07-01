@@ -24,6 +24,7 @@ anyio==4.14.1
     # via
     #   -c requirements.txt
     #   httpx
+    #   httpx2
     #   starlette
     #   watchfiles
 apscheduler==3.11.3
@@ -42,7 +43,6 @@ black==26.5.1
     # via acme.api (pyproject.toml)
 certifi==2026.6.17
     # via
-    #   -c requirements.txt
     #   httpcore
     #   httpx
 click==8.4.2
@@ -68,16 +68,21 @@ h11==0.16.0
     # via
     #   -c requirements.txt
     #   httpcore
+    #   httpcore2
     #   uvicorn
 httpcore==1.0.9
+    # via httpx
+httpcore2==2.5.0
     # via
     #   -c requirements.txt
-    #   httpx
+    #   httpx2
 httptools==0.8.0
     # via
     #   -c requirements.txt
     #   uvicorn
 httpx==0.28.1
+    # via acme.api (pyproject.toml)
+httpx2==2.5.0
     # via
     #   -c requirements.txt
     #   acme.api (pyproject.toml)
@@ -86,6 +91,7 @@ idna==3.18
     #   -c requirements.txt
     #   anyio
     #   httpx
+    #   httpx2
 iniconfig==2.3.0
     # via pytest
 isort==8.0.1
@@ -180,6 +186,11 @@ starlette==1.3.1
     #   fastapi
 tomlkit==0.15.0
     # via pylint
+truststore==0.10.4
+    # via
+    #   -c requirements.txt
+    #   httpcore2
+    #   httpx2
 types-pyyaml==6.0.12.20260518
     # via acme.api (pyproject.toml)
 typing-extensions==4.15.0
