@@ -23,6 +23,12 @@ renewal:
   check_interval_hours: 24
   window_days: 30
   max_retries: 3
+  shutdown_timeout_seconds: 30
+
+webhooks:
+  timeout_seconds: 5.0
+  max_retries: 3
+  backoff_seconds: 1.0
 
 # Optional bootstrap API keys. Values are raw secrets read once and stored as
 # hashes in SQLite if the named bootstrap key does not already exist.

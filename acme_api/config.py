@@ -90,6 +90,15 @@ class RenewalConfig(StrictConfigModel):
     check_interval_hours: int = Field(default=24, ge=1)
     window_days: int = Field(default=30, ge=1)
     max_retries: int = Field(default=3, ge=0)
+    shutdown_timeout_seconds: int = Field(default=30, ge=1)
+
+
+class WebhookDeliveryConfig(StrictConfigModel):
+    """Outbound webhook delivery configuration."""
+
+    timeout_seconds: float = Field(default=5.0, gt=0)
+    max_retries: int = Field(default=3, ge=0)
+    backoff_seconds: float = Field(default=1.0, ge=0)
 
 
 class AppSettings(StrictConfigModel):
@@ -109,6 +118,7 @@ class AppSettings(StrictConfigModel):
     deployment: DeploymentConfig = Field(default_factory=DeploymentConfig)
     acme: AcmeConfig = Field(default_factory=AcmeConfig)
     renewal: RenewalConfig = Field(default_factory=RenewalConfig)
+    webhooks: WebhookDeliveryConfig = Field(default_factory=WebhookDeliveryConfig)
     dns_providers: list[DnsProviderConfig] = Field(default_factory=list)
     acme_accounts: list[AcmeAccountConfig] = Field(default_factory=list)
     api_keys: dict[str, str] = Field(

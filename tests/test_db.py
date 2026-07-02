@@ -150,3 +150,4 @@ class TestInitDb:
         assert "certificates" in table_names
         assert "events" in table_names
         assert "renewal_attempts" in table_names
+        assert "webhook_configs" in table_names

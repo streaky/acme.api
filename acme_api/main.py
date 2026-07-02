@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import AsyncGenerator
 
 import uvicorn
@@ -15,11 +16,14 @@ from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 
 from acme_api.auth.bootstrap import seed_initial_keys
+from acme_api.backend.acmesh_backend import AcmeShBackend, _AcmeShBackendConfig
 from acme_api.config import AppSettings, load_config, prepare_runtime_paths
-from acme_api.db import get_db, init_db, init_engine
+from acme_api.db import get_db, get_session_factory, init_db, init_engine
 from acme_api.logging import setup_logging
 from acme_api.middleware import RequestIdMiddleware
 from acme_api.routers import certificates_router, config_router, events_router
+from acme_api.scheduler import RenewalScheduler
+from acme_api.webhooks import WebhookDeliverySettings, WebhookDispatcher
 
 
 @asynccontextmanager
@@ -52,10 +56,35 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
                 "seeded api key | name=%s role=%s", key.name, key.role.value
             )
 
-    yield
+    renewal_scheduler = RenewalScheduler(
+        session_factory=get_session_factory(),
+        backend=AcmeShBackend(
+            _AcmeShBackendConfig(
+                binary_path=Path(settings.acme.binary_path),
+                home_dir=settings.acme.home_dir,
+                log_file=None,
+                force_renewal=False,
+                dnssleep_seconds=None,
+            )
+        ),
+        config=settings.renewal,
+        webhook_dispatcher_factory=lambda session: WebhookDispatcher(
+            session,
+            WebhookDeliverySettings(
+                timeout_seconds=settings.webhooks.timeout_seconds,
+                max_retries=settings.webhooks.max_retries,
+                backoff_seconds=settings.webhooks.backoff_seconds,
+            ),
+        ),
+    )
+    await renewal_scheduler.start()
 
-    await engine.dispose()
-    root_logger.info("acme.api shutting down")
+    try:
+        yield
+    finally:
+        await renewal_scheduler.shutdown()
+        await engine.dispose()
+        root_logger.info("acme.api shutting down")
 
 
 def create_app(settings: AppSettings | None = None) -> FastAPI:

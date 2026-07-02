@@ -91,7 +91,13 @@ datefmt = %H:%M:%S
         finally:
             engine.dispose()
 
-        expected_tables = {"certificates", "events", "renewal_attempts", "alembic_version"}
+        expected_tables = {
+            "alembic_version",
+            "certificates",
+            "events",
+            "renewal_attempts",
+            "webhook_configs",
+        }
         assert expected_tables.issubset(table_names), (
             f"Missing tables {expected_tables - table_names}; found {table_names}"
         )

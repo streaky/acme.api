@@ -9,6 +9,7 @@ Public API — import everything you need from this single entry point::
         CertificateStatus,
         Event,
         RenewalAttempt,
+        WebhookConfig,
     )
 """
 
@@ -19,6 +20,7 @@ from acme_api.models.base import Base, TimestampMixin
 from acme_api.models.certificate import Certificate, CertificateStatus
 from acme_api.models.event import Event
 from acme_api.models.renewal_attempt import RenewalAttempt
+from acme_api.models.webhook import WebhookConfig
 
 __all__ = [
     "APIKey",
@@ -29,4 +31,5 @@ __all__ = [
     "Event",
     "RenewalAttempt",
     "TimestampMixin",
+    "WebhookConfig",
 ]

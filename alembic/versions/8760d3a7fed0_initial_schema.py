@@ -77,6 +77,17 @@ def upgrade() -> None:
     with op.batch_alter_table('renewal_attempts', schema=None) as batch_op:
         batch_op.create_index(batch_op.f('ix_renewal_attempts_certificate_id'), ['certificate_id'], unique=False)
 
+    op.create_table('webhook_configs',
+    sa.Column('id', sa.Uuid(), nullable=False),
+    sa.Column('url', sa.String(length=2048), nullable=False),
+    sa.Column('events', sa.JSON(), nullable=False),
+    sa.Column('secret', sa.String(length=255), nullable=False),
+    sa.Column('enabled', sa.Boolean(), server_default=sa.text('1'), nullable=False),
+    sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),
+    sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),
+    sa.PrimaryKeyConstraint('id')
+    )
+
     # ### end Alembic commands ###
 
 
@@ -86,6 +97,7 @@ def downgrade() -> None:
     with op.batch_alter_table('renewal_attempts', schema=None) as batch_op:
         batch_op.drop_index(batch_op.f('ix_renewal_attempts_certificate_id'))
 
+    op.drop_table('webhook_configs')
     op.drop_table('renewal_attempts')
     with op.batch_alter_table('events', schema=None) as batch_op:
         batch_op.drop_index(batch_op.f('ix_events_event_type'))
