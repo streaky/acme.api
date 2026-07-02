@@ -30,7 +30,6 @@ dependencies = [
     "apscheduler",
     "pydantic-settings",
     "httpx2",
-    "prometheus-client",
     "passlib[bcrypt]",
     "aiofiles",
 ]

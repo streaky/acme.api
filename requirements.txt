@@ -43,8 +43,6 @@ idna==3.18
     #   httpx2
 passlib==1.7.4
     # via acme.api (pyproject.toml)
-prometheus-client==0.25.0
-    # via acme.api (pyproject.toml)
 pydantic==2.13.4
     # via
     #   fastapi

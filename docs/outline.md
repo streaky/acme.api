@@ -95,11 +95,14 @@ Example:
 
 ```json
 {
+  "name": "wildcard-example",
   "domains": [
     "*.example.com",
     "example.com"
   ],
-  "dns_provider": "production"
+  "dns_provider_ref": "production",
+  "acme_account_ref": "letsencrypt-production",
+  "key_algorithm": "ecdsa"
 }
 ```
 
@@ -206,9 +209,9 @@ A certificate contains:
 
 Supported key algorithms:
 
-* RSA
-* ECDSA P-256
-* ECDSA P-384
+* `ecdsa`
+* `rsa-2048`
+* `rsa-4096`
 
 ---
 
@@ -287,13 +290,17 @@ Webhook payload example:
 ```json
 {
   "event": "certificate.renewed",
-  "certificate": "mail.example.com",
-  "expires": "2027-05-20T14:00:00Z",
+  "certificate_id": "0d15428a-9b52-4f1e-9965-31e57615c081",
+  "certificate_name": "mail.example.com",
+  "expiry": "2027-05-20T14:00:00+00:00",
   "domains": [
     "mail.example.com"
-  ]
+  ],
+  "details": {}
 }
 ```
+
+Webhook requests are signed with `X-Webhook-Signature: sha256=<hmac>`.
 
 ---
 
@@ -326,11 +333,13 @@ Version 1 should use SQLite.
 Persistent data includes:
 
 * certificates
-* accounts
-* providers
+* bootstrap/API-managed API keys
 * renewal schedule
 * webhook configuration
 * audit log
+
+ACME accounts and DNS provider aliases are administrator-owned configuration
+in v1 and are exposed through read-only API endpoints.
 
 Certificate material remains on the filesystem.
 
@@ -380,21 +389,6 @@ Log levels:
 
 ---
 
-# Metrics
-
-Expose Prometheus metrics.
-
-Example metrics:
-
-* certificates_total
-* certificates_expiring
-* renewals_total
-* renewals_failed
-* webhook_deliveries_total
-* webhook_failures_total
-
----
-
 # Design Principles
 
 * API-first
@@ -412,6 +406,7 @@ Example metrics:
 
 Potential future features include:
 
+* Prometheus-compatible metrics
 * Additional ACME backends
 * HTTP-01 support
 * TLS-ALPN-01 support

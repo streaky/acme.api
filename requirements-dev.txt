@@ -12,6 +12,8 @@ aiosqlite==0.22.1
     # via
     #   -c requirements.txt
     #   acme.api (pyproject.toml)
+alembic==1.18.5
+    # via acme.api (pyproject.toml)
 annotated-doc==0.0.4
     # via
     #   -c requirements.txt
@@ -89,6 +91,10 @@ isort==8.0.1
     #   pylint
 librt==0.12.0
     # via mypy
+mako==1.3.12
+    # via alembic
+markupsafe==3.0.3
+    # via mako
 mccabe==0.7.0
     # via
     #   flake8
@@ -119,10 +125,6 @@ pluggy==1.6.0
     # via
     #   pytest
     #   pytest-cov
-prometheus-client==0.25.0
-    # via
-    #   -c requirements.txt
-    #   acme.api (pyproject.toml)
 pycodestyle==2.14.0
     # via flake8
 pydantic==2.13.4
@@ -166,6 +168,7 @@ sqlalchemy[asyncio]==2.0.51
     # via
     #   -c requirements.txt
     #   acme.api (pyproject.toml)
+    #   alembic
 starlette==1.3.1
     # via
     #   -c requirements.txt
@@ -182,6 +185,7 @@ types-pyyaml==6.0.12.20260518
 typing-extensions==4.15.0
     # via
     #   -c requirements.txt
+    #   alembic
     #   fastapi
     #   mypy
     #   pydantic

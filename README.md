@@ -39,7 +39,6 @@ curl http://localhost:8080/v1/certificates
 | **Accounts** | Manage multiple CA accounts (Let's Encrypt prod/staging, ZeroSSL) |
 | **Renewals** | Automatic before expiry with tracked state machine |
 | **Webhooks** | Events on issue/renew/fail/expiry/revocation |
-| **Metrics** | Prometheus-compatible counters for certs, renewals, webhooks |
 | **Logging** | Structured JSON to stdout and file |
 | **Auth (v1)** | API key authentication with RBAC roles: Admin, Operator, Read Only |
 
@@ -138,7 +137,7 @@ Certificates are written atomically: temporary files → flush → rename. Consu
 
 ## Project status
 
-Prototype. API surface and architecture are defined; implementation underway. See `docs/outline.md` for the full specification.
+Prototype. API surface and architecture are defined; implementation underway. See `docs/outline.md` for the v1 specification and `docs/future.md` for deferred ideas.
 
 ## License
 

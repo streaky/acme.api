@@ -2,6 +2,8 @@
 
 > Derived from `docs/outline.md`. Targets Python 3.14, strict mypy, 80% per-file coverage gate.
 > Phase 0/1 foundation exists: package skeleton, config loading, structured logging, request IDs, health endpoint, and tests are wired.
+> Phases 2-8 now provide the core DB models, backend abstraction, auth, API routes, atomic deployer, renewal scheduler, and webhook dispatcher.
+> Implementation lesson: phases 5-8 built the pieces, but a dedicated lifecycle orchestration pass is needed before readiness/final polish so create/manual-renew/revoke consistently call the backend, deploy artifacts, update state, schedule jobs, and emit all lifecycle webhooks.
 
 ---
 
@@ -15,8 +17,7 @@
   - APScheduler (renewal jobs)
   - Pydantic Settings (`pydantic-settings`) — config loading beyond flat YAML
   - HTTPX2 (webhook delivery; acme.sh subprocess parsing is local but webhooks are HTTP)
-  - Prometheus Client (`prometheus-client`)
-  - Passlib + bcrypt (API key hashing)
+  - Passlib (PBKDF2-SHA512 API key hashing)
   - `aiofiles` (async filesystem writes for atomic deployment)
 - Update `[project.scripts]` entry point pointing to the main CLI.
 - Regenerate `requirements.txt` / `requirements-dev.txt` via `make deps-update`.
@@ -122,9 +123,11 @@ Accounts and providers are exposed through read-only API endpoints, but are not 
     - Admin: all endpoints.
     - Operator: create/renew certificates, view status, view events.
     - Read Only: GET endpoints only.
-  - API key hashing via Passlib + bcrypt for storage.
+  - API key hashing via Passlib PBKDF2-SHA512 for storage.
 
 **Acceptance:** Unauthenticated requests return 401; insufficient role returns 403; role dependencies are reusable by later route modules; auth behavior is covered by an RBAC test matrix.
+
+**Implementation note:** API keys are hashed with Passlib PBKDF2-SHA512. This avoids bcrypt's 72-byte input truncation behavior for high-entropy API keys while still using Passlib.
 
 ---
 
@@ -149,13 +152,16 @@ Accounts and providers are exposed through read-only API endpoints, but are not 
 - `GET /v1/events` — query audit/event log with filtering by type, certificate, time range.
 
 ### Implementation Details
-- FastAPI router structure: `acme_api/routes/certificates.py`, `accounts.py`, `providers.py`, `events.py`.
+- FastAPI router structure: `acme_api/routers/certificates.py`, `config.py`, `events.py`.
 - Dependency injection for DB sessions and backend instances.
 - Auth/RBAC dependencies applied at route level.
+- Initial implementation may create DB records and expose routes before full asynchronous issuance orchestration is wired.
 - Issuance state transitions: Pending → Issuing → Valid or Failed.
 - OpenAPI metadata on all endpoints (tags, summary, responses).
 
 **Acceptance:** All endpoints respond with correct status codes; input validation via Pydantic schemas; database CRUD wired end-to-end; OpenAPI docs at `/docs` reflect the API.
+
+**Implementation note:** The current Phase 5 route layer is DB-backed and RBAC-protected, but certificate creation and manual renewal do not yet run the ACME backend/deployer. That is now tracked explicitly in Phase 8.5.
 
 ---
 
@@ -182,6 +188,8 @@ Accounts and providers are exposed through read-only API endpoints, but are not 
 
 **Acceptance:** Deployment produces correct file layout; atomic rename guarantees consumers never see partial writes; filesystem permissions are set correctly (`0644` for certs, `0600` for keys).
 
+**Implementation note:** The deployer is implemented as a reusable boundary. It is not yet called from certificate issuance/renewal flows; that wiring belongs in Phase 8.5.
+
 ---
 
 ## Phase 7 — Renewal Scheduler
@@ -198,6 +206,8 @@ Accounts and providers are exposed through read-only API endpoints, but are not 
 
 **Acceptance:** Certificates within renewal window are picked up on startup; scheduled jobs execute and trigger backend renewal; failures logged and reflected in certificate status.
 
+**Implementation note:** The scheduler can renew valid certificates through an injected backend and emit renewed/failed webhooks. Deployment after renewal and full lifecycle integration are tracked in Phase 8.5.
+
 ---
 
 ## Phase 8 — Webhook Notifications
@@ -213,22 +223,60 @@ Accounts and providers are exposed through read-only API endpoints, but are not 
 
 **Acceptance:** Webhooks fire on all lifecycle events; payload matches spec; HMAC signature verifiable by consumer; failed deliveries retried and logged.
 
+**Implementation note:** The webhook dispatcher, HMAC signing, retry handling, DB-backed subscriptions, and failed-delivery audit events are implemented. Not every lifecycle event is emitted by route/service flows yet; that wiring belongs in Phase 8.5.
+
 ---
 
-## Phase 9 — Metrics & Health/Readiness Checks
+## Phase 8.5 — Lifecycle Orchestration Gap Closure
 
-**Goal:** Prometheus metrics endpoint and Kubernetes-ready health probes per outline spec.
+**Goal:** Stitch the implemented pieces from Phases 3, 5, 6, 7, and 8 into complete certificate workflows before adding readiness checks and production packaging.
 
-- `acme_api/metrics.py`:
-  - Prometheus Client SDK integration.
-  - Counters: `certificates_total`, `renewals_total`, `renewals_failed_total`, `webhook_deliveries_total`, `webhook_failures_total`.
-  - Gauge: `certificates_expiring` (count of certs expiring within N days).
-  - Metrics endpoint at `/metrics`.
+### Certificate Creation
+- `POST /v1/certificates` should:
+  - Create the DB record as `Pending`.
+  - Start issuance work without blocking on DNS propagation.
+  - Transition `Pending -> Issuing -> Valid` or `Failed`.
+  - Call the configured ACME backend with DNS-01 provider/account settings.
+  - Deploy successful issuance artifacts through `acme_api/deployer.py`.
+  - Set `expiry_date` from backend results.
+  - Emit audit events and webhooks for `certificate.created`, `certificate.issued`, and `certificate.failed`.
+
+### Manual Renewal
+- `POST /v1/certificates/{id}/renew` should:
+  - Trigger the same renewal path used by the scheduler.
+  - Deploy renewed artifacts on success.
+  - Emit `certificate.renewed` or `certificate.failed`.
+  - Return `202 Accepted` after queuing/starting work, not after DNS propagation.
+
+### Revocation / Soft Delete
+- `DELETE /v1/certificates/{id}` should:
+  - Mark the row `Revoked`.
+  - Remove pending renewal jobs for the certificate.
+  - Emit `certificate.revoked`.
+  - Defer actual ACME CA revocation unless explicitly added as a separate backend capability.
+
+### Expiry Notifications
+- Scheduler should emit `certificate.expiring` for certificates inside the configured notification window without duplicating events every startup.
+
+### Service Boundary
+- Add an application service layer instead of putting workflow logic inside FastAPI route functions or APScheduler callbacks.
+- Keep backend, deployer, webhook dispatcher, and scheduler injectable for tests.
+
+**Acceptance:** Create, scheduled renew, manual renew, revoke, deploy, audit events, and webhooks work end-to-end with the mock backend; real acme.sh integration remains covered by subprocess-level tests and optional staging/Pebble tests.
+
+---
+
+## Phase 9 — Readiness Checks
+
+**Goal:** Kubernetes-ready health probes that reflect actual runtime dependencies.
+
 - Health/Readiness endpoints per outline:
   - `GET /health` — always returns 200 with uptime.
   - `GET /ready` — checks DB connectivity and acme.sh binary availability; returns 503 if any dependency is down.
 
-**Acceptance:** `/metrics` exposes all defined metrics in Prometheus format; `/health` responds 200 on startup; `/ready` reflects actual dependency state.
+**Acceptance:** `/health` responds 200 on startup; `/ready` reflects actual dependency state.
+
+**Deferred:** Prometheus-compatible metrics are useful but not part of the immediate v1 path. See `docs/future.md`.
 
 ---
 
@@ -282,6 +330,31 @@ Accounts and providers are exposed through read-only API endpoints, but are not 
 
 ---
 
+## Phase 12.5 — Continuous Integration
+
+**Goal:** Add GitHub Actions CI that matches local quality gates and can be exercised locally before pushing.
+
+- Add `.github/workflows/ci.yml`.
+- CI should run on pull requests and pushes to the default branch.
+- CI should install Python 3.14 and project dependencies from pinned requirements.
+- CI should run the same gates developers run locally:
+  - `make typecheck`
+  - `make lint`
+  - `make isort`
+  - `make check-max-lines`
+  - `make test`
+- Prefer calling `make combined-check` from CI unless splitting jobs provides clearer failure reporting.
+- Keep optional staging/Pebble ACME tests gated behind secrets or explicit workflow inputs.
+- Keep Docker build smoke tests separate from the fast unit/integration gate if runtime becomes too slow.
+- Use the existing local CI simulator before considering the workflow done:
+  - `make simulate-ci`
+
+**Local prerequisites:** `simulate-ci` uses `act`; configure `ACT_VERSION`, `ACT_PLATFORM`, and `ACT_IMAGE` in `.env` or the shell environment.
+
+**Acceptance:** GitHub Actions workflow is committed, `make simulate-ci` passes locally, and the remote workflow passes on the branch/PR.
+
+---
+
 ## Dependency Graph & Parallelism
 
 Phases with no hard dependencies can be worked in parallel:
@@ -296,10 +369,11 @@ Phase 2 + Phase 3 + Phase 4 -> Phase 5
 Phase 5 -> Phase 6
         -> Phase 7
         -> Phase 8
-        -> Phase 9
         -> Phase 10
 
-Phase 6 + Phase 7 + Phase 8 + Phase 9 + Phase 10 -> Phase 11 -> Phase 12
+Phase 6 + Phase 7 + Phase 8 -> Phase 8.5
+Phase 8.5 -> Phase 9
+Phase 8.5 + Phase 9 + Phase 10 -> Phase 11 -> Phase 12 -> Phase 12.5
 ```
 
 **Strict ordering:**
@@ -307,9 +381,12 @@ Phase 6 + Phase 7 + Phase 8 + Phase 9 + Phase 10 -> Phase 11 -> Phase 12
 - Phase 2 → Phase 4 (auth needs config and, if DB-backed keys are enabled, DB foundation).
 - Phase 2 + Phase 3 + Phase 4 → Phase 5 (API needs DB models, backend abstraction, and final auth dependencies).
 - Phase 5 → Phase 6, 7, 8 (deployment, scheduling, webhooks all act on certificates created by the API).
-- Phase 6–10 can proceed in parallel once Phase 5 is complete.
+- Phase 6–8 can proceed in parallel once Phase 5 is complete.
+- Phase 8.5 depends on Phases 3, 5, 6, 7, and 8 because it wires backend, API routes, deployer, scheduler, and webhooks into full lifecycle workflows.
+- Phase 9 should follow Phase 8.5 so readiness checks validate the final lifecycle dependencies.
 - Phase 10 depends on a working application (Phase 5+).
 - Phase 11 and 12 are final polish — depend on everything else.
+- Phase 12.5 depends on the final local gates and integration suite so CI reflects the project’s real release criteria.
 
 ---
 
@@ -326,10 +403,12 @@ Phase 6 + Phase 7 + Phase 8 + Phase 9 + Phase 10 -> Phase 11 -> Phase 12
 | 6     | Unit: atomic write, permissions, metadata JSON | 90% |
 | 7     | Unit (mock backend): scheduling logic, state transitions | 90% |
 | 8     | Unit (mock HTTPX2): payload construction, HMAC, retry | 85% |
-| 9     | Unit: metric counters, health checks | 85% |
+| 8.5   | Integration: mock backend full lifecycle through API/service | 90% |
+| 9     | Unit/integration: health and readiness checks | 85% |
 | 10    | Smoke test: container build + startup | — |
 | 11    | Regression: full `make combined-check` | 80% |
 | 12    | E2E: full lifecycle against mock/Pebble; optional staging ACME | 70% |
+| 12.5  | CI workflow: GitHub Actions plus local `make simulate-ci` | — |
 
 ---
 
@@ -341,3 +420,4 @@ Phase 6 + Phase 7 + Phase 8 + Phase 9 + Phase 10 -> Phase 11 -> Phase 12
 | Atomic deploy on non-POSIX FS | Partial cert visible to consumers | Test with `os.rename` semantics; fallback to copy+rename if needed |
 | SQLite concurrency under load | Write conflicts | WAL mode enabled; connection pooling configured conservatively |
 | API key rotation without downtime | Auth outage during transition | Support multiple active keys; soft-delete old keys |
+| Phase helpers remain disconnected | API appears complete but does not issue/deploy/notify end-to-end | Phase 8.5 service-layer integration before readiness/final polish |
