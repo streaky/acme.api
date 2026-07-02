@@ -303,6 +303,8 @@ Accounts and providers are exposed through read-only API endpoints, but are not 
 
 **Acceptance:** `make build start` produces a running container; health endpoint accessible; volumes persist data across restarts; certificates are deployed to the mounted filesystem.
 
+**Implementation note:** Docker packaging uses a multi-stage Python 3.14 slim image, a non-root `acmeapi` user, named compose volumes for `/data`, `/certificates`, and `/acmesh`, and an entrypoint that installs `acme.sh` into the app user's home on first start if missing. The compose config boots with an intentionally minimal `/config/config.yaml` for smoke checks; real issuance requires mounting a populated config and DNS credential files.
+
 ---
 
 ## Phase 11 — OpenAPI Documentation & Final Polish
@@ -315,6 +317,8 @@ Accounts and providers are exposed through read-only API endpoints, but are not 
 - Final pass on linting, type-checking, formatting (`make combined-check`).
 
 **Acceptance:** OpenAPI docs are comprehensive; Swagger UI interactive; all quality gates pass at 80%+ coverage per file; mypy strict mode clean.
+
+**Implementation note:** FastAPI serves Swagger UI at `/docs` and OpenAPI at `/openapi.json`. Routes include explicit response metadata for common auth failures and lifecycle-specific errors. README now documents local development, Docker compose deployment, configuration, API key auth, endpoint summary, and certificate file layout.
 
 ---
 

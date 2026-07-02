@@ -68,6 +68,19 @@ class TestCreateApp:
         assert resp.json()["checks"]["database"]["ok"] is True
         assert resp.json()["checks"]["acme_binary"]["ok"] is False
 
+    def test_openapi_documents_health_and_certificate_errors(
+        self, settings: AppSettings
+    ) -> None:
+        app = create_app(settings=settings)
+
+        with TestClient(app) as client:
+            spec = client.get("/openapi.json").json()
+
+        assert "/ready" in spec["paths"]
+        assert "503" in spec["paths"]["/ready"]["get"]["responses"]
+        certificate_post = spec["paths"]["/v1/certificates"]["post"]
+        assert "409" in certificate_post["responses"]
+
     def test_settings_stored_on_state(self, settings: AppSettings) -> None:
         app = create_app(settings=settings)
         stored = getattr(app.state, "settings", None)
@@ -112,6 +125,7 @@ class TestMain:
         with (
             patch("acme_api.main.load_config", return_value=AppSettings()),
             patch("uvicorn.run") as mock_run,
+            patch.dict("os.environ", {}, clear=True),
         ):
             from acme_api.main import main
 
@@ -121,3 +135,21 @@ class TestMain:
         call_kwargs = mock_run.call_args.kwargs
         assert call_kwargs["factory"] is True
         assert call_kwargs["port"] == 8000
+
+    def test_main_honors_host_and_port_env(self) -> None:
+        with (
+            patch("acme_api.main.load_config", return_value=AppSettings()),
+            patch("uvicorn.run") as mock_run,
+            patch.dict(
+                "os.environ",
+                {"ACME_API_HOST": "127.0.0.1", "ACME_API_PORT": "8080"},
+                clear=True,
+            ),
+        ):
+            from acme_api.main import main
+
+            main()
+
+        call_kwargs = mock_run.call_args.kwargs
+        assert call_kwargs["host"] == "127.0.0.1"
+        assert call_kwargs["port"] == 8080

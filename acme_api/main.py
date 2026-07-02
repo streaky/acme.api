@@ -7,10 +7,11 @@ CLI function that launches uvicorn via the ``acme-api`` console script.
 from __future__ import annotations
 
 import logging
+import os
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import AsyncGenerator
+from typing import Any, AsyncGenerator
 
 import uvicorn
 from fastapi import FastAPI, Request, Response
@@ -28,6 +29,12 @@ from acme_api.routers import certificates_router, config_router, events_router
 from acme_api.scheduler import RenewalDeploymentConfig, RenewalScheduler
 from acme_api.services.certificates import CertificateLifecycleService
 from acme_api.webhooks import WebhookDeliverySettings, WebhookDispatcher
+
+_COMMON_OPENAPI_RESPONSES: dict[int | str, dict[str, Any]] = {
+    401: {"description": "Missing or invalid API key."},
+    403: {"description": "Authenticated API key does not have the required role."},
+    500: {"description": "Internal server error."},
+}
 
 
 @asynccontextmanager
@@ -130,6 +137,7 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
         ),
         version="0.1.0",
         lifespan=lifespan,
+        responses=_COMMON_OPENAPI_RESPONSES,
     )
 
     app.state.settings = settings
@@ -141,7 +149,11 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
     app.include_router(config_router)
     app.include_router(events_router)
 
-    @app.get("/health", tags=["Health"])
+    @app.get(
+        "/health",
+        tags=["Health"],
+        responses={200: {"description": "Process is running."}},
+    )
     async def health() -> dict[str, str | float]:
         """Liveness probe — always returns 200 when the process is running."""
         return {
@@ -149,7 +161,14 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
             "uptime_seconds": round(time.monotonic() - app.state.started_at, 3),
         }
 
-    @app.get("/ready", tags=["Health"])
+    @app.get(
+        "/ready",
+        tags=["Health"],
+        responses={
+            200: {"description": "Runtime dependencies are available."},
+            503: {"description": "One or more runtime dependencies are unavailable."},
+        },
+    )
     async def ready() -> JSONResponse:
         """Readiness probe for database and acme.sh executable availability."""
         ready_ok, checks = await readiness_status(
@@ -176,18 +195,21 @@ def main() -> None:
     """CLI entry point — loads config and launches uvicorn."""
     settings = load_config()
     setup_logging(level=settings.log.level, format_type=settings.log.format)
+    host = os.environ.get("ACME_API_HOST", "0.0.0.0")
+    port = int(os.environ.get("ACME_API_PORT", "8000"))
 
     logging.getLogger(__name__).info(
-        "launching uvicorn | host=0.0.0.0 port=%s level=%s",
-        8000,
+        "launching uvicorn | host=%s port=%s level=%s",
+        host,
+        port,
         settings.log.level.lower(),
     )
 
     uvicorn.run(
         "acme_api.main:create_app",
         factory=True,
-        host="0.0.0.0",
-        port=8000,
+        host=host,
+        port=port,
         log_level=settings.log.level.lower(),
     )
 

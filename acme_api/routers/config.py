@@ -22,6 +22,7 @@ def get_settings(request: Request) -> AppSettings:
     "/accounts",
     response_model=list[AcmeAccountRead],
     summary="List ACME accounts",
+    responses={200: {"description": "Configured ACME account aliases returned."}},
 )
 async def list_acme_accounts(
     _: object = Depends(require_readonly),
@@ -38,6 +39,7 @@ async def list_acme_accounts(
     "/providers",
     response_model=list[DnsProviderRead],
     summary="List DNS providers",
+    responses={200: {"description": "Configured DNS provider aliases returned."}},
 )
 async def list_dns_providers(
     _: object = Depends(require_readonly),

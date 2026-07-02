@@ -1,0 +1,33 @@
+log:
+  level: INFO
+  format: json
+
+database:
+  url: sqlite+aiosqlite:////data/acme.db
+  pool_size: 5
+
+deployment:
+  directory: /certificates
+  permissions_cert: 420
+  permissions_key: 384
+
+acme:
+  binary_path: /home/acmeapi/.local/bin/acme.sh
+  home_dir: /acmesh
+
+renewal:
+  enabled: true
+  check_interval_hours: 24
+  window_days: 30
+  max_retries: 3
+  shutdown_timeout_seconds: 30
+
+webhooks:
+  timeout_seconds: 5.0
+  max_retries: 3
+  backoff_seconds: 1.0
+
+api_keys: {}
+dns_providers: []
+acme_accounts: []
+

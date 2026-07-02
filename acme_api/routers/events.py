@@ -17,7 +17,12 @@ from acme_api.schemas.event import EventRead
 router = APIRouter(prefix="/v1/events", tags=["Events"])
 
 
-@router.get("", response_model=list[EventRead], summary="List audit events")
+@router.get(
+    "",
+    response_model=list[EventRead],
+    summary="List audit events",
+    responses={200: {"description": "Audit events returned."}},
+)
 async def list_events(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     _: object = Depends(require_readonly),
     db_session: AsyncSession = Depends(get_db_session),

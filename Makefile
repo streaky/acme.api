@@ -1,4 +1,4 @@
-.PHONY: venv deps dev start test typecheck lint flake8 format isort isort-fix combined-check install-act simulate-ci deps-update
+.PHONY: venv pip-cache-dir deps dev start build stop logs test typecheck lint flake8 format isort isort-fix check-max-lines combined-check install-act simulate-ci deps-update
 .ONESHELL:
 
 export ROOT_PATH=$(abspath $(dir $(lastword $(MAKEFILE_LIST))))

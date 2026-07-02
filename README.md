@@ -1,123 +1,106 @@
 # acme.api
 
-A lightweight, self-hosted REST service for managing ACME certificates — backed by `acme.sh`.
+Lightweight, self-hosted REST service for managing ACME certificates through a modern API while delegating ACME protocol work to `acme.sh`.
 
-## Philosophy
+## Status
 
-**acme.api is not another ACME client.** It's a certificate management service with a clean REST interface that delegates all protocol work to mature tooling. By separating the infrastructure API from the ACME implementation, applications integrate once and remain independent of the underlying ACME client.
+Prototype v1 implementation. The core API, SQLite state, API key auth, `acme.sh` backend wrapper, atomic certificate deployment, renewal scheduler, lifecycle webhooks, health/readiness probes, and Docker packaging are implemented. End-to-end staging/Pebble integration tests are still planned.
 
 ## Quick Start
 
-```sh
-docker run -d \
-  --name acme-api \
-  -v /path/to/certs:/certificates \
-  -v /path/acme.sh-data:/acmesh \
-  -p 8080:8080 \
-  ghcr.io/acme.api/acme.api:latest
-```
-
-Three persistent volumes — `/data`, `/certificates`, `/acmesh` — each with a distinct purpose. See the [deployment section](#deployment) for details.
-
-Then interact via the REST API:
+Build and start the local container:
 
 ```sh
-# Check readiness
+make build
+make start
+curl http://localhost:8080/health
 curl http://localhost:8080/ready
-
-# List certificates
-curl http://localhost:8080/v1/certificates
 ```
 
-## Features
+The compose file uses named volumes for persistent runtime state:
 
-| Area | What's included (v1) |
-|---|---|
-| **Certificate lifecycle** | Issue, renew, revoke via REST API |
-| **Validation** | DNS-01 with persistent provider mode — credentials configured once by admin |
-| **ACME backend** | `acme.sh` — extensible to lego or native later without API changes |
-| **Accounts** | Manage multiple CA accounts (Let's Encrypt prod/staging, ZeroSSL) |
-| **Renewals** | Automatic before expiry with tracked state machine |
-| **Webhooks** | Events on issue/renew/fail/expiry/revocation |
-| **Logging** | Structured JSON to stdout and file |
-| **Auth (v1)** | API key authentication with RBAC roles: Admin, Operator, Read Only |
-
-### Out of scope (v1)
-
-HTTP-01, TLS-ALPN-01, per-request DNS credentials, web UI, HA/clustering.
-
-## REST API
-
-Full OpenAPI spec is generated from the codebase. Key endpoints:
-
-| Method | Path | Description |
+| Volume | Container path | Purpose |
 |---|---|---|
-| `POST`   | `/v1/certificates` | Register and issue a certificate |
-| `GET`    | `/v1/certificates` | List all certificates |
-| `GET`    | `/v1/certificates/{id}` | Get certificate details |
-| `DELETE` | `/v1/certificates/{id}` | Revoke and remove |
-| `POST`   | `/v1/certificates/{id}/renew` | Force renewal |
-| `GET`    | `/v1/accounts` | List ACME accounts |
-| `GET`    | `/v1/providers` | List DNS providers |
-| `GET`    | `/v1/events` | Event history |
-| `GET`    | `/health` | Liveness probe |
-| `GET`    | `/ready` | Readiness probe |
+| `acme-api-data` | `/data` | SQLite database |
+| `acme-api-certificates` | `/certificates` | Atomically deployed certificate files |
+| `acme-api-acmesh` | `/acmesh` | `acme.sh` account and certificate state |
 
-### Example: issue a certificate
+The bundled compose config at `docker/config.yaml` is intentionally minimal so the service can boot for health checks. For real issuance, copy `config.example.yaml`, configure ACME accounts, DNS provider aliases, API keys, and credential file mounts, then set `ACME_API_CONFIG` to that file inside the container.
+
+## Local Development
+
+```sh
+make dev
+make combined-check
+```
+
+Useful targets:
+
+| Command | Description |
+|---|---|
+| `make test` | Run pytest with coverage and the per-file coverage gate |
+| `make typecheck` | Run strict mypy |
+| `make lint` | Run flake8 and pylint |
+| `make isort` | Check import ordering |
+| `make build` | Build the Docker image |
+| `make start` | Start the Docker compose service |
+| `make stop` | Stop the Docker compose service |
+| `make logs` | Follow container logs |
+
+## Configuration
+
+Configuration is YAML. By default the app loads `./config.yaml`; set `ACME_API_CONFIG=/path/to/config.yaml` to override it. See `config.example.yaml` for a complete reference.
+
+Certificate issuance requires:
+
+- one or more `acme_accounts`
+- one or more `dns_providers`
+- a DNS provider env file readable by the container
+- at least one bootstrap API key in `api_keys`
+
+Example certificate request:
 
 ```json
-POST /v1/certificates
-
 {
-  "name": "mail.example.com",
+  "name": "wildcard-example",
   "domains": ["*.example.com", "example.com"],
-  "dns_provider": "production",
-  "account": "letsencrypt-production"
+  "acme_account_ref": "letsencrypt-production",
+  "dns_provider_ref": "production",
+  "key_algorithm": "ecdsa"
 }
 ```
 
-### Certificate key algorithms
+## REST API
 
-- RSA (default)
-- ECDSA P-256
-- ECDSA P-384
+OpenAPI is generated at `/openapi.json`; Swagger UI is available at `/docs`.
 
-## Architecture
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| `GET` | `/health` | none | Liveness probe with uptime |
+| `GET` | `/ready` | none | DB and `acme.sh` readiness |
+| `POST` | `/v1/certificates` | operator | Create and queue issuance |
+| `GET` | `/v1/certificates` | readonly | List certificates |
+| `GET` | `/v1/certificates/{id}` | readonly | Read certificate details |
+| `POST` | `/v1/certificates/{id}/renew` | operator | Queue manual renewal |
+| `DELETE` | `/v1/certificates/{id}` | operator | Soft-delete as revoked |
+| `GET` | `/v1/accounts` | readonly | List configured ACME accounts |
+| `GET` | `/v1/providers` | readonly | List configured DNS providers |
+| `GET` | `/v1/events` | readonly | Query audit events |
 
+Authenticated requests use bearer API keys:
+
+```sh
+curl \
+  -H "Authorization: Bearer $ACME_API_KEY" \
+  http://localhost:8080/v1/certificates
 ```
-                    REST API
-                        │
-        ┌───────────────┴───────────────┐
-        │                               │
- Certificate Manager           Renewal Scheduler
-        │                               │
-        └───────────────┬───────────────┘
-                        │
-                  ACME Backend
-                        │
-                    acme.sh
-                        │
-      Let's Encrypt / ZeroSSL / Buypass
-```
 
-The public API is backend-independent. The ACME implementation (currently `acme.sh`) is an internal detail.
+## Certificate Deployment
 
-## Deployment
+Successful issuance and renewal deploy artifacts under the first requested domain:
 
-### Docker volumes
-
-| Mount | Purpose | Survives upgrades? |
-|---|---|---|
-| `/data` | SQLite database — certs, accounts, providers, webhooks, audit log | Yes |
-| `/certificates` | Issued certificate files — atomic deployment via rename | Yes |
-| `/acmesh` | `acme.sh` home directory and account state | Yes |
-
-### Shared filesystem model
-
-Certificates are written atomically: temporary files → flush → rename. Consumers never see partially-written certificates. Layout per domain:
-
-```
-/certificates/mail.example.com/
+```text
+/certificates/example.com/
     cert.pem
     chain.pem
     fullchain.pem
@@ -125,20 +108,32 @@ Certificates are written atomically: temporary files → flush → rename. Consu
     metadata.json
 ```
 
-## Design Principles
+Files are copied to temporary names, flushed, permissioned, and atomically renamed into place. Default permissions are `0644` for certificate files and `0600` for private keys.
 
-- **API-first** — everything through REST, no CLI dependency
-- **Backend-independent** — swap ACME client without breaking integrations
-- **Simple deployment** — one container, three volumes, YAML config
-- **Opinionated defaults** — works out of the box with sensible settings
-- **Minimal configuration** — DNS providers configured once by admin
-- **No Kubernetes requirement** — runs anywhere Docker does
-- **No external database** — SQLite is sufficient for v1
+## Architecture
 
-## Project status
+```text
+                    REST API
+                        |
+        +---------------+---------------+
+        |                               |
+ Certificate Lifecycle          Renewal Scheduler
+        |                               |
+        +---------------+---------------+
+                        |
+                  ACME Backend
+                        |
+                    acme.sh
+```
 
-Prototype. API surface and architecture are defined; implementation underway. See `docs/outline.md` for the v1 specification and `docs/future.md` for deferred ideas.
+The public API is independent of the ACME backend. v1 supports DNS-01 through `acme.sh`; future backends can be added behind the same internal protocol.
 
-## License
+## Non-Goals For v1
 
-See [LICENSE](LICENSE).
+- HTTP-01 validation
+- TLS-ALPN-01 validation
+- per-request DNS credentials
+- web UI
+- high availability or clustering
+- implementing the ACME protocol directly
+

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from typing import Any
 
 from fastapi import (
     APIRouter,
@@ -30,12 +31,17 @@ from acme_api.services.certificates import (
 
 router = APIRouter(prefix="/v1/certificates", tags=["Certificates"])
 
+_NOT_FOUND_RESPONSE: dict[int | str, dict[str, Any]] = {
+    404: {"description": "Certificate not found."}
+}
+
 
 @router.post(
     "",
     response_model=CertificateRead,
     status_code=status.HTTP_202_ACCEPTED,
     summary="Create a certificate request",
+    responses={409: {"description": "Certificate name already exists."}},
 )
 async def create_certificate(
     payload: CertificateCreate,
@@ -61,6 +67,7 @@ async def create_certificate(
     "",
     response_model=list[CertificateRead],
     summary="List certificates",
+    responses={200: {"description": "Certificate list returned."}},
 )
 async def list_certificates(
     _: object = Depends(require_readonly),
@@ -84,6 +91,7 @@ async def list_certificates(
     "/{certificate_id}",
     response_model=CertificateRead,
     summary="Get certificate detail",
+    responses=_NOT_FOUND_RESPONSE,
 )
 async def get_certificate(
     certificate_id: uuid.UUID,
@@ -104,6 +112,7 @@ async def get_certificate(
     "/{certificate_id}",
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Revoke a certificate record",
+    responses=_NOT_FOUND_RESPONSE,
 )
 async def revoke_certificate(
     certificate_id: uuid.UUID,
@@ -126,6 +135,11 @@ async def revoke_certificate(
     response_model=CertificateRead,
     status_code=status.HTTP_202_ACCEPTED,
     summary="Trigger certificate renewal",
+    responses={
+        **_NOT_FOUND_RESPONSE,
+        409: {"description": "Certificate is not renewable."},
+        503: {"description": "Renewal scheduler is unavailable."},
+    },
 )
 async def renew_certificate(
     certificate_id: uuid.UUID,
