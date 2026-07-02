@@ -50,6 +50,7 @@ dev = [
     "pytest-cov",
     "pylint",
     "types-PyYAML",
+    "alembic",
 ]
 
 [project.scripts]
