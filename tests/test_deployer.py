@@ -1,0 +1,161 @@
+"""Tests for atomic certificate filesystem deployment."""
+
+from __future__ import annotations
+
+import json
+import pathlib
+import stat
+from datetime import datetime, timezone
+from unittest.mock import patch
+
+import pytest
+
+from acme_api.backend.dataclasses import CertExpiry, IssuanceResult
+from acme_api.deployer import (
+    DeploymentError,
+    deploy_certificate_artifacts,
+    deploy_issuance_result,
+)
+
+
+def _write_sources(tmp_path: pathlib.Path) -> CertExpiry:
+    source_dir = tmp_path / "acmesh"
+    source_dir.mkdir()
+    files = {
+        "cert.pem": b"server-cert\n",
+        "chain.pem": b"ca-chain\n",
+        "fullchain.pem": b"server-cert\nca-chain\n",
+        "privkey.pem": b"private-key\n",
+    }
+    for file_name, content in files.items():
+        (source_dir / file_name).write_bytes(content)
+
+    return CertExpiry(
+        cert_path=str(source_dir / "cert.pem"),
+        chain_path=str(source_dir / "chain.pem"),
+        fullchain_path=str(source_dir / "fullchain.pem"),
+        privkey_path=str(source_dir / "privkey.pem"),
+        expires_at=datetime(2026, 12, 31, 23, 59, tzinfo=timezone.utc),
+    )
+
+
+def _mode(path: pathlib.Path) -> int:
+    return stat.S_IMODE(path.stat().st_mode)
+
+
+def test_deploy_issuance_result_writes_expected_layout(tmp_path: pathlib.Path) -> None:
+    """Deployment writes all expected files under the primary domain."""
+    cert = _write_sources(tmp_path)
+    result = IssuanceResult(
+        account_key_path="/acmesh/acct.key",
+        cert=cert,
+        domains=["example.com", "www.example.com"],
+    )
+
+    deployed = deploy_issuance_result(result, tmp_path / "certificates", issuer="test-ca")
+
+    assert deployed.directory == tmp_path / "certificates" / "example.com"
+    assert deployed.cert_path.read_bytes() == b"server-cert\n"
+    assert deployed.chain_path.read_bytes() == b"ca-chain\n"
+    assert deployed.fullchain_path.read_bytes() == b"server-cert\nca-chain\n"
+    assert deployed.privkey_path.read_bytes() == b"private-key\n"
+
+    metadata = json.loads(deployed.metadata_path.read_text(encoding="utf-8"))
+    assert metadata["primary_domain"] == "example.com"
+    assert metadata["domains"] == ["example.com", "www.example.com"]
+    assert metadata["issuer"] == "test-ca"
+    assert metadata["expires_at"] == "2026-12-31T23:59:00+00:00"
+
+
+def test_deploy_sets_certificate_and_key_permissions(tmp_path: pathlib.Path) -> None:
+    """Certificate files are public-readable and private keys are restricted."""
+    cert = _write_sources(tmp_path)
+
+    deployed = deploy_certificate_artifacts(
+        cert=cert,
+        domains=["secure.example.com"],
+        deployment_root=tmp_path / "certificates",
+    )
+
+    assert _mode(deployed.cert_path) == 0o644
+    assert _mode(deployed.chain_path) == 0o644
+    assert _mode(deployed.fullchain_path) == 0o644
+    assert _mode(deployed.metadata_path) == 0o644
+    assert _mode(deployed.privkey_path) == 0o600
+
+
+def test_wildcard_primary_domain_uses_safe_directory_name(tmp_path: pathlib.Path) -> None:
+    """Wildcard domains are deployed to a portable directory name."""
+    cert = _write_sources(tmp_path)
+
+    deployed = deploy_certificate_artifacts(
+        cert=cert,
+        domains=["*.example.com"],
+        deployment_root=tmp_path / "certificates",
+    )
+
+    assert deployed.directory.name == "wildcard.example.com"
+
+
+def test_missing_source_file_raises(tmp_path: pathlib.Path) -> None:
+    """Deployment fails before writing when any source artifact is missing."""
+    cert = _write_sources(tmp_path)
+    pathlib.Path(cert.chain_path).unlink()
+
+    with pytest.raises(DeploymentError, match="missing certificate source"):
+        deploy_certificate_artifacts(
+            cert=cert,
+            domains=["example.com"],
+            deployment_root=tmp_path / "certificates",
+        )
+
+
+def test_unsafe_primary_domain_raises(tmp_path: pathlib.Path) -> None:
+    """Primary domain must not escape the deployment root."""
+    cert = _write_sources(tmp_path)
+
+    with pytest.raises(DeploymentError, match="unsafe primary domain"):
+        deploy_certificate_artifacts(
+            cert=cert,
+            domains=["../example.com"],
+            deployment_root=tmp_path / "certificates",
+        )
+
+
+def test_failed_deploy_preserves_existing_files(tmp_path: pathlib.Path) -> None:
+    """A write failure leaves previously deployed files untouched."""
+    cert = _write_sources(tmp_path)
+    deployment_root = tmp_path / "certificates"
+    first = deploy_certificate_artifacts(
+        cert=cert,
+        domains=["example.com"],
+        deployment_root=deployment_root,
+    )
+    first.cert_path.write_bytes(b"existing-cert\n")
+
+    with patch("acme_api.deployer.os.replace", side_effect=OSError("boom")):
+        with pytest.raises(DeploymentError, match="failed to deploy"):
+            deploy_certificate_artifacts(
+                cert=cert,
+                domains=["example.com"],
+                deployment_root=deployment_root,
+            )
+
+    assert first.cert_path.read_bytes() == b"existing-cert\n"
+    assert not any(path.name.startswith(".deploy-") for path in first.directory.iterdir())
+
+
+def test_custom_permissions_are_honored(tmp_path: pathlib.Path) -> None:
+    """Deployment accepts configured certificate and key modes."""
+    cert = _write_sources(tmp_path)
+
+    deployed = deploy_certificate_artifacts(
+        cert=cert,
+        domains=["mode.example.com"],
+        deployment_root=tmp_path / "certificates",
+        permissions_cert=0o640,
+        permissions_key=0o400,
+    )
+
+    assert _mode(deployed.cert_path) == 0o640
+    assert _mode(deployed.privkey_path) == 0o400
