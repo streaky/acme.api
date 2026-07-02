@@ -62,59 +62,68 @@ class TestGetDb:
     async def test_yields_active_session(self, settings: AppSettings) -> None:
         """get_db yields an AsyncSession that can execute queries."""
         engine = init_engine(settings=settings)
-        await init_db(engine=engine)
+        try:
+            await init_db(engine=engine)
 
-        async with get_db() as session:
-            assert isinstance(session, AsyncSession)
-            result = await session.execute(text("SELECT 1"))
-            assert result.scalar_one() == 1
+            async with get_db() as session:
+                assert isinstance(session, AsyncSession)
+                result = await session.execute(text("SELECT 1"))
+                assert result.scalar_one() == 1
+        finally:
+            await engine.dispose()
 
     @pytest.mark.anyio
     async def test_commits_on_success(self, settings: AppSettings) -> None:
         """A value inserted inside get_db persists and is visible from a new session."""
         engine = init_engine(settings=settings)
-        await init_db(engine=engine)
+        try:
+            await init_db(engine=engine)
 
-        row_id = _uuid.uuid4()
-        async with get_db() as session:
-            await session.execute(
-                text("INSERT INTO events (id, event_type, details) VALUES (:id, 'test.event', '{}')"),
-                {"id": str(row_id)},
-            )
-            await session.commit()
+            row_id = _uuid.uuid4()
+            async with get_db() as session:
+                await session.execute(
+                    text("INSERT INTO events (id, event_type, details) VALUES (:id, 'test.event', '{}')"),
+                    {"id": str(row_id)},
+                )
+                await session.commit()
 
-        # Open a fresh session to confirm persistence after commit.
-        async with get_db() as verify:
-            result = await verify.execute(
-                text("SELECT event_type FROM events WHERE id = :id"),
-                {"id": str(row_id)},
-            )
-            assert result.scalar_one() == "test.event"
+            # Open a fresh session to confirm persistence after commit.
+            async with get_db() as verify:
+                result = await verify.execute(
+                    text("SELECT event_type FROM events WHERE id = :id"),
+                    {"id": str(row_id)},
+                )
+                assert result.scalar_one() == "test.event"
+        finally:
+            await engine.dispose()
 
     @pytest.mark.anyio
     async def test_rollback_on_exception(self, settings: AppSettings) -> None:
         """An exception inside get_db rolls back so the insert is lost."""
         engine = init_engine(settings=settings)
-        await init_db(engine=engine)
-
-        row_id = _uuid.uuid4()
         try:
-            async with get_db() as session:
-                await session.execute(
-                    text("INSERT INTO events (id, event_type, details) VALUES (:id, 'rollback.event', '{}')"),
+            await init_db(engine=engine)
+
+            row_id = _uuid.uuid4()
+            try:
+                async with get_db() as session:
+                    await session.execute(
+                        text("INSERT INTO events (id, event_type, details) VALUES (:id, 'rollback.event', '{}')"),
+                        {"id": str(row_id)},
+                    )
+                    raise ValueError("boom")
+            except ValueError:
+                pass
+
+            # Open a fresh session to confirm the row was rolled back.
+            async with get_db() as verify:
+                result = await verify.execute(
+                    text("SELECT id FROM events WHERE id = :id"),
                     {"id": str(row_id)},
                 )
-                raise ValueError("boom")
-        except ValueError:
-            pass
-
-        # Open a fresh session to confirm the row was rolled back.
-        async with get_db() as verify:
-            result = await verify.execute(
-                text("SELECT id FROM events WHERE id = :id"),
-                {"id": str(row_id)},
-            )
-            assert result.scalar_one_or_none() is None
+                assert result.scalar_one_or_none() is None
+        finally:
+            await engine.dispose()
 
 
 # ---------------------------------------------------------------------------
@@ -125,15 +134,19 @@ class TestInitDb:
     @pytest.mark.anyio
     async def test_creates_all_tables(self, settings: AppSettings) -> None:
         engine = init_engine(settings=settings)
-        await init_db(engine=engine)
+        try:
+            await init_db(engine=engine)
 
-        async with engine.connect() as conn:
-            result = await conn.execute(
-                text("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
-            )
-            table_names = [row[0] for row in result.fetchall()]
+            async with engine.connect() as conn:
+                result = await conn.execute(
+                    text("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+                )
+                table_names = [row[0] for row in result.fetchall()]
+        finally:
+            await engine.dispose()
 
-        # The three concrete model tables must all exist.
+        # The concrete model tables must all exist.
+        assert "api_keys" in table_names
         assert "certificates" in table_names
         assert "events" in table_names
         assert "renewal_attempts" in table_names

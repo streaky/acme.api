@@ -111,6 +111,10 @@ class AppSettings(StrictConfigModel):
     renewal: RenewalConfig = Field(default_factory=RenewalConfig)
     dns_providers: list[DnsProviderConfig] = Field(default_factory=list)
     acme_accounts: list[AcmeAccountConfig] = Field(default_factory=list)
+    api_keys: dict[str, str] = Field(
+        default_factory=dict,
+        description="Bootstrap API keys for initial admin/operator/readonly access.",
+    )
 
     def check(self) -> None:
         """Validate configuration at startup.

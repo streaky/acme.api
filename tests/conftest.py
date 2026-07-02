@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 from fastapi import FastAPI
-from httpx import ASGITransport, AsyncClient
+from httpx2 import ASGITransport, AsyncClient
 
 # Ensure the project root is on sys.path regardless of invocation directory.
 ROOT = Path(__file__).resolve().parent.parent
@@ -25,7 +25,12 @@ def anyio_backend() -> str:
 @pytest.fixture()
 def app(tmp_path: Path) -> FastAPI:
     """Create a FastAPI app with an isolated temporary database path."""
-    from acme_api.config import AppSettings, DatabaseConfig, DeploymentConfig
+    from acme_api.config import (
+        AcmeConfig,
+        AppSettings,
+        DatabaseConfig,
+        DeploymentConfig,
+    )
     from acme_api.main import create_app
 
     db_dir = tmp_path / "data"
@@ -36,6 +41,7 @@ def app(tmp_path: Path) -> FastAPI:
     settings = AppSettings(
         database=DatabaseConfig(url=f"sqlite+aiosqlite:///{db_dir}/acme.db"),
         deployment=DeploymentConfig(directory=deploy_dir),
+        acme=AcmeConfig(home_dir=tmp_path / "acmesh"),
     )
     return create_app(settings=settings)
 

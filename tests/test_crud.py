@@ -28,8 +28,12 @@ def settings(tmp_path: Path) -> AppSettings:
 
 
 @pytest.fixture()
-def engine(settings: AppSettings) -> AsyncEngine:
-    return init_engine(settings=settings)
+async def engine(settings: AppSettings) -> AsyncGenerator[AsyncEngine, None]:
+    engine = init_engine(settings=settings)
+    try:
+        yield engine
+    finally:
+        await engine.dispose()
 
 
 @pytest.fixture()

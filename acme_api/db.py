@@ -78,6 +78,16 @@ async def get_db() -> typing.AsyncIterator[AsyncSession]:
     """FastAPI dependency that yields an async database session."""
     session_factory = get_session_factory()
     async with session_factory() as session:
+        try:
+            yield session
+        except Exception:
+            await session.rollback()
+            raise
+
+
+async def get_db_session() -> typing.AsyncIterator[AsyncSession]:
+    """Yield an async database session for FastAPI dependency injection."""
+    async with get_db() as session:
         yield session
 
 
