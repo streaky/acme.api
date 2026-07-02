@@ -15,8 +15,8 @@ from acme_api.schemas.certificate import (
 from acme_api.schemas.config_readonly import AcmeAccountRead, DnsProviderRead
 from acme_api.schemas.event import EventCreate
 
-
 # ── TestCertificateCreate ──────────────────────────────────────────────
+
 
 class TestCertificateCreate:
     def test_valid_creation(self) -> None:

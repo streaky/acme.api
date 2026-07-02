@@ -1,3 +1,5 @@
+"""Event audit-log request and response schemas."""
+
 from __future__ import annotations
 
 import uuid

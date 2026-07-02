@@ -2,18 +2,17 @@
 
 from __future__ import annotations
 
-import uuid as _uuid
+from collections.abc import AsyncGenerator
 from pathlib import Path
 
 import pytest
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from acme_api.config import AppSettings, DatabaseConfig, DeploymentConfig
-from acme_api.db import init_db, init_engine
+from acme_api.db import get_session_factory, init_db, init_engine
 from acme_api.models.certificate import Certificate, CertificateStatus
 from acme_api.models.event import Event
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -29,18 +28,21 @@ def settings(tmp_path: Path) -> AppSettings:
 
 
 @pytest.fixture()
-async def engine(settings: AppSettings):
+def engine(settings: AppSettings) -> AsyncEngine:
     return init_engine(settings=settings)
 
 
 @pytest.fixture()
-async def session_factory(engine, settings: AppSettings):
-    import acme_api.db as db_mod
-    return db_mod._SessionFactory  # type: ignore[return-value]
+def session_factory(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:
+    assert engine is not None
+    return get_session_factory()
 
 
 @pytest.fixture()
-async def db(engine, session_factory) -> AsyncSession:
+async def db(
+    engine: AsyncEngine,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> AsyncGenerator[AsyncSession, None]:
     await init_db(engine)
     async with session_factory() as s:
         yield s

@@ -123,11 +123,11 @@ class AppSettings(StrictConfigModel):
         """
         errors = []
 
-        # Database URL must look like a valid DSN
-        if not self.database.url.startswith(("sqlite", "postgresql")):
+        # v1 is SQLite-backed. Keep validation narrow until another database
+        # backend is intentionally supported end to end.
+        if not self.database.url.startswith("sqlite"):
             errors.append(
-                f"database.url must start with 'sqlite' or 'postgresql', "
-                f"got: {self.database.url!r}"
+                f"database.url must start with 'sqlite', got: {self.database.url!r}"
             )
 
         # Deployment directory should exist. Creation is handled separately so

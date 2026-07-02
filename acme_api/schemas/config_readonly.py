@@ -1,3 +1,5 @@
+"""Read-only schemas for config-owned integrations."""
+
 from __future__ import annotations
 
 from pydantic import BaseModel

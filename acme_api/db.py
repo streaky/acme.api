@@ -16,14 +16,15 @@ from sqlalchemy.ext.asyncio import (
 from acme_api.config import AppSettings
 from acme_api.models.base import Base
 
-
 # ---------------------------------------------------------------------------
 # Module-level handles populated by init_engine()
 # ---------------------------------------------------------------------------
-_SessionFactory: typing.Optional[async_sessionmaker[AsyncSession]] = None
-_engine: typing.Optional[AsyncEngine] = None
+_SESSION_FACTORY: typing.Optional[async_sessionmaker[AsyncSession]] = None
+_ENGINE: typing.Optional[AsyncEngine] = None
+
+
 def _set_sqlite_pragma(
-    dbapi_conn: typing.Any, connection_record: typing.Any
+    dbapi_conn: typing.Any, _connection_record: typing.Any
 ) -> None:
     """Apply SQLite pragmas on each new aiosqlite connection."""
     cursor = dbapi_conn.cursor()
@@ -48,7 +49,7 @@ def init_engine(settings: AppSettings) -> AsyncEngine:
     -------
     AsyncEngine configured with SQLite pragmas and pool settings.
     """
-    global _engine, _SessionFactory  # noqa: PLW0603
+    global _ENGINE, _SESSION_FACTORY  # pylint: disable=global-statement
 
     engine = create_async_engine(
         url=settings.database.url,
@@ -59,11 +60,11 @@ def init_engine(settings: AppSettings) -> AsyncEngine:
         pool_pre_ping=True,
     )
 
-    # Apply pragmas on each new connection.
-    sa_event.listen(engine.sync_engine, "connect", _set_sqlite_pragma)
+    if engine.url.get_backend_name() == "sqlite":
+        sa_event.listen(engine.sync_engine, "connect", _set_sqlite_pragma)
 
-    _engine = engine
-    _SessionFactory = async_sessionmaker(
+    _ENGINE = engine
+    _SESSION_FACTORY = async_sessionmaker(
         bind=engine,
         class_=AsyncSession,
         expire_on_commit=False,
@@ -75,9 +76,15 @@ def init_engine(settings: AppSettings) -> AsyncEngine:
 @contextlib.asynccontextmanager
 async def get_db() -> typing.AsyncIterator[AsyncSession]:
     """FastAPI dependency that yields an async database session."""
-    assert _SessionFactory is not None, "Call init_engine() before mounting routes."
-    async with _SessionFactory() as session:
+    session_factory = get_session_factory()
+    async with session_factory() as session:
         yield session
+
+
+def get_session_factory() -> async_sessionmaker[AsyncSession]:
+    """Return the initialized async session factory."""
+    assert _SESSION_FACTORY is not None, "Call init_engine() before mounting routes."
+    return _SESSION_FACTORY
 
 
 async def init_db(engine: AsyncEngine) -> None:

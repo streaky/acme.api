@@ -4,19 +4,19 @@ from __future__ import annotations
 
 import uuid as _uuid
 from pathlib import Path
+from typing import Callable, cast
 
 import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
-import acme_api.db as db_mod
 from acme_api.config import AppSettings, DatabaseConfig, DeploymentConfig
-from acme_api.db import get_db, init_db, init_engine
-
+from acme_api.db import get_db, get_session_factory, init_db, init_engine
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture()
 def settings(tmp_path: Path) -> AppSettings:
@@ -35,8 +35,7 @@ class TestInitEngine:
         engine = init_engine(settings=settings)
 
         assert isinstance(engine, AsyncEngine)
-        assert db_mod._engine is not None
-        assert db_mod._SessionFactory is not None
+        assert callable(get_session_factory())
 
     def test_pool_size_from_config(self, tmp_path: Path) -> None:
         custom_pool_size = 3
@@ -50,7 +49,8 @@ class TestInitEngine:
 
         engine = init_engine(settings=cfg)
 
-        assert engine.pool.size() == custom_pool_size
+        pool_size = cast(Callable[[], int], getattr(engine.pool, "size"))
+        assert pool_size() == custom_pool_size
 
 
 # ---------------------------------------------------------------------------

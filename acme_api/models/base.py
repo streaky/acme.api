@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import datetime as _dt
 
-from sqlalchemy import DateTime, func
+from sqlalchemy import DateTime, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -26,14 +26,14 @@ class TimestampMixin:
 
     created_at: Mapped[_dt.datetime] = mapped_column(
         DateTime(timezone=True),
-        server_default=func.now(),
+        server_default=text("CURRENT_TIMESTAMP"),
         nullable=False,
         doc="Timestamp when the row was first inserted.",
     )
     updated_at: Mapped[_dt.datetime] = mapped_column(
         DateTime(timezone=True),
-        onupdate=func.now(),
-        server_default=func.now(),
+        onupdate=text("CURRENT_TIMESTAMP"),
+        server_default=text("CURRENT_TIMESTAMP"),
         nullable=False,
         doc="Timestamp of the most recent update to this row.",
     )

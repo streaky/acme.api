@@ -6,9 +6,7 @@ import os
 import subprocess
 from pathlib import Path
 
-import pytest
 from sqlalchemy import create_engine, text
-
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -74,6 +72,7 @@ datefmt = %H:%M:%S
             cwd=PROJECT_ROOT,
             env=env,
             text=True,
+            check=False,
         )
         assert result.returncode == 0, (
             f"alembic upgrade head failed:\n{result.stdout}\n{result.stderr}"

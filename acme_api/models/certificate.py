@@ -6,7 +6,7 @@ import datetime as _dt
 import enum
 import uuid as _uuid
 
-from sqlalchemy import DateTime, Enum, JSON, String
+from sqlalchemy import JSON, DateTime, Enum, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from acme_api.models.base import Base, TimestampMixin

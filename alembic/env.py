@@ -40,7 +40,7 @@ if str(_project_root) not in sys.path:
 # Model metadata (autogenerate support)
 # ---------------------------------------------------------------------------
 
-from acme_api.models.base import Base  # noqa: E402
+from acme_api.models import Base  # noqa: E402
 
 target_metadata = Base.metadata
 
