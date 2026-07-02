@@ -7,6 +7,7 @@ CLI function that launches uvicorn via the ``acme-api`` console script.
 from __future__ import annotations
 
 import logging
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncGenerator
@@ -14,6 +15,7 @@ from typing import AsyncGenerator
 import uvicorn
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from acme_api.auth.bootstrap import seed_initial_keys
 from acme_api.backend.acmesh_backend import AcmeShBackend, _AcmeShBackendConfig
@@ -21,8 +23,10 @@ from acme_api.config import AppSettings, load_config, prepare_runtime_paths
 from acme_api.db import get_db, get_session_factory, init_db, init_engine
 from acme_api.logging import setup_logging
 from acme_api.middleware import RequestIdMiddleware
+from acme_api.readiness import readiness_status
 from acme_api.routers import certificates_router, config_router, events_router
-from acme_api.scheduler import RenewalScheduler
+from acme_api.scheduler import RenewalDeploymentConfig, RenewalScheduler
+from acme_api.services.certificates import CertificateLifecycleService
 from acme_api.webhooks import WebhookDeliverySettings, WebhookDispatcher
 
 
@@ -56,26 +60,44 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
                 "seeded api key | name=%s role=%s", key.name, key.role.value
             )
 
-    renewal_scheduler = RenewalScheduler(
-        session_factory=get_session_factory(),
-        backend=AcmeShBackend(
-            _AcmeShBackendConfig(
-                binary_path=Path(settings.acme.binary_path),
-                home_dir=settings.acme.home_dir,
-                log_file=None,
-                force_renewal=False,
-                dnssleep_seconds=None,
-            )
-        ),
-        config=settings.renewal,
-        webhook_dispatcher_factory=lambda session: WebhookDispatcher(
+    backend = getattr(app.state, "acme_backend", None) or AcmeShBackend(
+        _AcmeShBackendConfig(
+            binary_path=Path(settings.acme.binary_path),
+            home_dir=settings.acme.home_dir,
+            log_file=None,
+            force_renewal=False,
+            dnssleep_seconds=None,
+        )
+    )
+    app.state.acme_backend = backend
+
+    def webhook_dispatcher_factory(session: AsyncSession) -> WebhookDispatcher:
+        return WebhookDispatcher(
             session,
             WebhookDeliverySettings(
                 timeout_seconds=settings.webhooks.timeout_seconds,
                 max_retries=settings.webhooks.max_retries,
                 backoff_seconds=settings.webhooks.backoff_seconds,
             ),
+        )
+    renewal_scheduler = RenewalScheduler(
+        session_factory=get_session_factory(),
+        backend=backend,
+        config=settings.renewal,
+        webhook_dispatcher_factory=webhook_dispatcher_factory,
+        deployment=RenewalDeploymentConfig(
+            root=settings.deployment.directory,
+            permissions_cert=settings.deployment.permissions_cert,
+            permissions_key=settings.deployment.permissions_key,
         ),
+    )
+    app.state.renewal_scheduler = renewal_scheduler
+    app.state.certificate_service = CertificateLifecycleService(
+        session_factory=get_session_factory(),
+        backend=backend,
+        settings=settings,
+        scheduler=renewal_scheduler,
+        webhook_dispatcher_factory=webhook_dispatcher_factory,
     )
     await renewal_scheduler.start()
 
@@ -111,6 +133,7 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
     )
 
     app.state.settings = settings
+    app.state.started_at = time.monotonic()
 
     # Middleware: request ID injection (outermost)
     app.add_middleware(RequestIdMiddleware)
@@ -119,9 +142,25 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
     app.include_router(events_router)
 
     @app.get("/health", tags=["Health"])
-    async def health() -> dict[str, str]:
+    async def health() -> dict[str, str | float]:
         """Liveness probe — always returns 200 when the process is running."""
-        return {"status": "ok"}
+        return {
+            "status": "ok",
+            "uptime_seconds": round(time.monotonic() - app.state.started_at, 3),
+        }
+
+    @app.get("/ready", tags=["Health"])
+    async def ready() -> JSONResponse:
+        """Readiness probe for database and acme.sh executable availability."""
+        ready_ok, checks = await readiness_status(
+            settings=app.state.settings,
+            session_factory=get_session_factory(),
+        )
+        status_code = 200 if ready_ok else 503
+        return JSONResponse(
+            status_code=status_code,
+            content={"status": "ready" if ready_ok else "not_ready", "checks": checks},
+        )
 
     @app.exception_handler(Exception)
     async def unhandled_exception_handler(

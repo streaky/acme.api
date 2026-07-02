@@ -4,16 +4,29 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+    status,
+)
 from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from acme_api.auth.rbac import require_operator, require_readonly
 from acme_api.db import get_db_session
 from acme_api.models.certificate import Certificate, CertificateStatus
-from acme_api.models.event import Event
 from acme_api.schemas.certificate import CertificateCreate, CertificateRead
+from acme_api.services.certificates import (
+    CertificateConflictError,
+    CertificateLifecycleService,
+    CertificateNotFoundError,
+    CertificateNotRenewableError,
+)
 
 router = APIRouter(prefix="/v1/certificates", tags=["Certificates"])
 
@@ -26,37 +39,21 @@ router = APIRouter(prefix="/v1/certificates", tags=["Certificates"])
 )
 async def create_certificate(
     payload: CertificateCreate,
+    background_tasks: BackgroundTasks,
+    request: Request,
     _: object = Depends(require_operator),
-    db_session: AsyncSession = Depends(get_db_session),
 ) -> Certificate:
-    """Create a pending certificate record and audit event."""
-    certificate = Certificate(
-        name=payload.name,
-        domains=payload.domains,
-        acme_account_ref=payload.acme_account_ref,
-        dns_provider_ref=payload.dns_provider_ref,
-        key_algorithm=payload.key_algorithm,
-        status=CertificateStatus.PENDING,
-    )
-    db_session.add(certificate)
+    """Create a pending certificate record and queue issuance."""
+    service = _certificate_service(request)
     try:
-        await db_session.flush()
-    except IntegrityError as exc:
-        await db_session.rollback()
+        certificate = await service.create_certificate(payload)
+    except CertificateConflictError as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Certificate name already exists.",
+            detail=str(exc),
         ) from exc
 
-    db_session.add(
-        Event(
-            event_type="certificate.created",
-            certificate_id=certificate.id,
-            details={"name": certificate.name, "domains": certificate.domains},
-        )
-    )
-    await db_session.commit()
-    await db_session.refresh(certificate)
+    background_tasks.add_task(service.issue_certificate, certificate.id)
     return certificate
 
 
@@ -110,25 +107,17 @@ async def get_certificate(
 )
 async def revoke_certificate(
     certificate_id: uuid.UUID,
+    request: Request,
     _: object = Depends(require_operator),
-    db_session: AsyncSession = Depends(get_db_session),
 ) -> Response:
     """Soft-delete a certificate by marking it revoked."""
-    certificate = await db_session.get(Certificate, certificate_id)
-    if certificate is None:
+    try:
+        await _certificate_service(request).revoke_certificate(certificate_id)
+    except CertificateNotFoundError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Certificate not found.",
-        )
-    certificate.status = CertificateStatus.REVOKED
-    db_session.add(
-        Event(
-            event_type="certificate.revoked",
-            certificate_id=certificate.id,
-            details={"name": certificate.name},
-        )
-    )
-    await db_session.commit()
+        ) from exc
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -140,24 +129,40 @@ async def revoke_certificate(
 )
 async def renew_certificate(
     certificate_id: uuid.UUID,
+    background_tasks: BackgroundTasks,
+    request: Request,
     _: object = Depends(require_operator),
-    db_session: AsyncSession = Depends(get_db_session),
 ) -> Certificate:
-    """Mark a certificate as renewing and record the manual trigger."""
-    certificate = await db_session.get(Certificate, certificate_id)
-    if certificate is None:
+    """Queue a manual renewal through the scheduler renewal path."""
+    service = _certificate_service(request)
+    try:
+        certificate = await service.request_manual_renewal(certificate_id)
+    except CertificateNotFoundError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Certificate not found.",
+        ) from exc
+    except CertificateNotRenewableError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+
+    scheduler = getattr(request.app.state, "renewal_scheduler", None)
+    if scheduler is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Renewal scheduler is not available.",
         )
-    certificate.status = CertificateStatus.RENEWING
-    db_session.add(
-        Event(
-            event_type="certificate.renewal_requested",
-            certificate_id=certificate.id,
-            details={"name": certificate.name},
-        )
-    )
-    await db_session.commit()
-    await db_session.refresh(certificate)
+    background_tasks.add_task(scheduler.renew_certificate, certificate.id)
     return certificate
+
+
+def _certificate_service(request: Request) -> CertificateLifecycleService:
+    service = getattr(request.app.state, "certificate_service", None)
+    if not isinstance(service, CertificateLifecycleService):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Certificate lifecycle service is not available.",
+        )
+    return service

@@ -36,7 +36,37 @@ class TestCreateApp:
         with TestClient(app) as client:
             resp = client.get("/health")
         assert resp.status_code == 200
-        assert resp.json() == {"status": "ok"}
+        assert resp.json()["status"] == "ok"
+        assert isinstance(resp.json()["uptime_seconds"], float)
+
+    def test_ready_endpoint_ok(self, settings: AppSettings, tmp_path: Path) -> None:
+        acme_binary = tmp_path / "acme.sh"
+        acme_binary.write_text("#!/bin/sh\n", encoding="utf-8")
+        acme_binary.chmod(0o755)
+        settings.acme.binary_path = str(acme_binary)
+        app = create_app(settings=settings)
+
+        with TestClient(app) as client:
+            resp = client.get("/ready")
+
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "ready"
+        assert resp.json()["checks"]["database"]["ok"] is True
+        assert resp.json()["checks"]["acme_binary"]["ok"] is True
+
+    def test_ready_endpoint_reports_missing_acme_binary(
+        self, settings: AppSettings, tmp_path: Path
+    ) -> None:
+        settings.acme.binary_path = str(tmp_path / "missing-acme.sh")
+        app = create_app(settings=settings)
+
+        with TestClient(app) as client:
+            resp = client.get("/ready")
+
+        assert resp.status_code == 503
+        assert resp.json()["status"] == "not_ready"
+        assert resp.json()["checks"]["database"]["ok"] is True
+        assert resp.json()["checks"]["acme_binary"]["ok"] is False
 
     def test_settings_stored_on_state(self, settings: AppSettings) -> None:
         app = create_app(settings=settings)

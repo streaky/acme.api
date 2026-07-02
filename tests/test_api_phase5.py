@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import datetime as dt
 from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from acme_api.backend.dataclasses import CertExpiry, IssuanceResult
 from acme_api.config import (
     AcmeAccountConfig,
     AcmeConfig,
@@ -16,6 +18,69 @@ from acme_api.config import (
     DnsProviderConfig,
 )
 from acme_api.main import create_app
+
+
+class _ArtifactBackend:
+    """Test backend that writes deployable certificate artifacts."""
+
+    def __init__(self, root: Path) -> None:
+        self._root = root
+        self.issue_calls = 0
+        self.renew_calls = 0
+
+    async def register_account(self, email: str, server_url: str) -> object:
+        raise NotImplementedError
+
+    async def issue_certificate(
+        self,
+        domains: list[str],
+        method: str,
+        challenge_params: dict[str, object],
+        account_key_path: str | None = None,
+    ) -> IssuanceResult:
+        del method, challenge_params
+        self.issue_calls += 1
+        return self._result(domains, "issue", account_key_path)
+
+    async def renew_certificate(
+        self,
+        domains: list[str],
+        force_renewal: bool = False,
+    ) -> IssuanceResult:
+        del force_renewal
+        self.renew_calls += 1
+        return self._result(domains, "renew", "account.key")
+
+    async def get_certificate_expiry(self, cert_path: str) -> CertExpiry:
+        raise NotImplementedError
+
+    def _result(
+        self,
+        domains: list[str],
+        operation: str,
+        account_key_path: str | None,
+    ) -> IssuanceResult:
+        directory = self._root / operation / str(self.issue_calls + self.renew_calls)
+        directory.mkdir(parents=True, exist_ok=True)
+        paths = {
+            "cert": directory / "cert.pem",
+            "key": directory / "privkey.pem",
+            "chain": directory / "chain.pem",
+            "fullchain": directory / "fullchain.pem",
+        }
+        for name, path in paths.items():
+            path.write_text(f"{operation}-{name}", encoding="utf-8")
+        return IssuanceResult(
+            account_key_path=account_key_path or "account.key",
+            cert=CertExpiry(
+                cert_path=str(paths["cert"]),
+                privkey_path=str(paths["key"]),
+                chain_path=str(paths["chain"]),
+                fullchain_path=str(paths["fullchain"]),
+                expires_at=dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=90),
+            ),
+            domains=domains,
+        )
 
 
 def _make_app(tmp_path: Path) -> FastAPI:
@@ -39,7 +104,9 @@ def _make_app(tmp_path: Path) -> FastAPI:
             "readonly": "readonly-key-12345",
         },
     )
-    return create_app(settings=settings)
+    app = create_app(settings=settings)
+    app.state.acme_backend = _ArtifactBackend(tmp_path / "acme-artifacts")
+    return app
 
 
 def test_certificate_lifecycle_endpoints(tmp_path: Path) -> None:
@@ -68,12 +135,14 @@ def test_certificate_lifecycle_endpoints(tmp_path: Path) -> None:
         detail = client.get(f"/v1/certificates/{certificate_id}", headers=headers)
         assert detail.status_code == 200
         assert detail.json()["name"] == "example-cert"
+        assert detail.json()["status"] == "valid"
+        assert (tmp_path / "certs" / "example.com" / "fullchain.pem").is_file()
 
         renewed = client.post(
             f"/v1/certificates/{certificate_id}/renew", headers=headers
         )
         assert renewed.status_code == 202
-        assert renewed.json()["status"] == "renewing"
+        assert renewed.json()["status"] == "valid"
 
         deleted = client.delete(f"/v1/certificates/{certificate_id}", headers=headers)
         assert deleted.status_code == 204

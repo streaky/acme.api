@@ -2,8 +2,8 @@
 
 > Derived from `docs/outline.md`. Targets Python 3.14, strict mypy, 80% per-file coverage gate.
 > Phase 0/1 foundation exists: package skeleton, config loading, structured logging, request IDs, health endpoint, and tests are wired.
-> Phases 2-8 now provide the core DB models, backend abstraction, auth, API routes, atomic deployer, renewal scheduler, and webhook dispatcher.
-> Implementation lesson: phases 5-8 built the pieces, but a dedicated lifecycle orchestration pass is needed before readiness/final polish so create/manual-renew/revoke consistently call the backend, deploy artifacts, update state, schedule jobs, and emit all lifecycle webhooks.
+> Phases 2-9 now provide the core DB models, backend abstraction, auth, API routes, atomic deployer, renewal scheduler, webhook dispatcher, lifecycle orchestration, and health/readiness probes.
+> Implementation lesson: lifecycle behavior belongs behind an application service boundary so FastAPI routes and APScheduler callbacks stay thin while backend calls, artifact deployment, state changes, scheduling, audit events, and webhooks remain testable together.
 
 ---
 
@@ -264,6 +264,8 @@ Accounts and providers are exposed through read-only API endpoints, but are not 
 
 **Acceptance:** Create, scheduled renew, manual renew, revoke, deploy, audit events, and webhooks work end-to-end with the mock backend; real acme.sh integration remains covered by subprocess-level tests and optional staging/Pebble tests.
 
+**Implementation note:** Creation now creates a pending row, queues issuance, calls the configured ACME backend with DNS-01 account/provider settings, deploys successful artifacts, transitions to `Valid` or `Failed`, schedules renewal, and emits lifecycle audit/webhook events. Manual renewals queue the same scheduler renewal path, which deploys renewed artifacts on success. Soft delete marks rows `Revoked`, removes scheduler jobs, and emits `certificate.revoked`. Startup renewal reconstruction emits one non-duplicated `certificate.expiring` event for certificates already inside the renewal window.
+
 ---
 
 ## Phase 9 — Readiness Checks
@@ -277,6 +279,8 @@ Accounts and providers are exposed through read-only API endpoints, but are not 
 **Acceptance:** `/health` responds 200 on startup; `/ready` reflects actual dependency state.
 
 **Deferred:** Prometheus-compatible metrics are useful but not part of the immediate v1 path. See `docs/future.md`.
+
+**Implementation note:** `/health` is a liveness probe that returns status and process uptime. `/ready` checks SQLite connectivity and the configured `acme.sh` binary path, returning HTTP 503 with per-check details when either dependency is unavailable.
 
 ---
 

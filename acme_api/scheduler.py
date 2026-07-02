@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import dataclasses as dc
 import datetime as dt
 import uuid
 from collections.abc import Callable
+from pathlib import Path
 from typing import Awaitable
 
 from apscheduler.schedulers.asyncio import (  # type: ignore[import-untyped]
@@ -15,31 +17,45 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from acme_api.backend.acmesh_backend import AcmeShError, TransientAcmeShError
+from acme_api.backend.dataclasses import IssuanceResult
 from acme_api.backend.protocol import AcmeBackend
 from acme_api.config import RenewalConfig
+from acme_api.deployer import DeploymentError, deploy_issuance_result
 from acme_api.models.certificate import Certificate, CertificateStatus
 from acme_api.models.event import Event
 from acme_api.models.renewal_attempt import RenewalAttempt
+from acme_api.services.certificates import expiring_event_exists
 from acme_api.webhooks import WebhookDispatcher
 
 WebhookDispatcherFactory = Callable[[AsyncSession], WebhookDispatcher]
 
 
+@dc.dataclass(frozen=True)
+class RenewalDeploymentConfig:
+    """Filesystem deployment settings for successful renewals."""
+
+    root: Path
+    permissions_cert: int = 0o644
+    permissions_key: int = 0o600
+
+
 class RenewalScheduler:
     """Schedules and executes automatic certificate renewals."""
 
-    def __init__(
+    def __init__(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         self,
         session_factory: async_sessionmaker[AsyncSession],
         backend: AcmeBackend,
         config: RenewalConfig,
         webhook_dispatcher_factory: WebhookDispatcherFactory | None = None,
+        deployment: RenewalDeploymentConfig | None = None,
         scheduler: AsyncIOScheduler | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._backend = backend
         self._config = config
         self._webhook_dispatcher_factory = webhook_dispatcher_factory
+        self._deployment = deployment
         self._scheduler = scheduler or AsyncIOScheduler(timezone=dt.timezone.utc)
 
     async def start(self) -> None:
@@ -62,6 +78,8 @@ class RenewalScheduler:
                 select(Certificate).where(Certificate.status == CertificateStatus.VALID)
             )
             certificates = list(result.scalars().all())
+            for certificate in certificates:
+                await self._emit_expiring_if_due(session, certificate)
 
         for certificate in certificates:
             self.schedule_certificate(certificate)
@@ -82,6 +100,13 @@ class RenewalScheduler:
             misfire_grace_time=3600,
         )
         return run_at
+
+    def remove_certificate(self, certificate_id: uuid.UUID) -> None:
+        """Remove queued renewal and retry jobs for a certificate."""
+        for job_id in (_job_id(certificate_id), _retry_job_id(certificate_id)):
+            job = self._scheduler.get_job(job_id)
+            if job is not None:
+                job.remove()
 
     async def renew_certificate(self, certificate_id: uuid.UUID) -> None:
         """Run one renewal attempt for the latest certificate row state."""
@@ -114,6 +139,25 @@ class RenewalScheduler:
                     transient=False,
                 )
                 return
+            except DeploymentError as exc:
+                await self._record_failure(
+                    session=session,
+                    certificate=certificate,
+                    error=exc,
+                    transient=False,
+                )
+                return
+
+            try:
+                deployment_path = self._deploy_result(result, certificate.acme_account_ref)
+            except DeploymentError as exc:
+                await self._record_failure(
+                    session=session,
+                    certificate=certificate,
+                    error=exc,
+                    transient=False,
+                )
+                return
 
             certificate.expiry_date = result.cert.expires_at
             certificate.status = CertificateStatus.VALID
@@ -130,6 +174,9 @@ class RenewalScheduler:
                     details={
                         "domains": certificate.domains,
                         "expires_at": result.cert.expires_at.isoformat(),
+                        "deployment_path": str(deployment_path)
+                        if deployment_path is not None
+                        else None,
                     },
                 )
             )
@@ -137,6 +184,51 @@ class RenewalScheduler:
             await self._dispatch_webhook(session, "certificate.renewed", certificate)
 
             self.schedule_certificate(certificate)
+
+    async def _emit_expiring_if_due(
+        self,
+        session: AsyncSession,
+        certificate: Certificate,
+    ) -> None:
+        """Emit one expiring event for certificates inside the renewal window."""
+        if certificate.expiry_date is None:
+            return
+        expiry = _as_utc(certificate.expiry_date)
+        now = dt.datetime.now(dt.timezone.utc)
+        if expiry - dt.timedelta(days=self._config.window_days) > now:
+            return
+        if await expiring_event_exists(session, certificate.id):
+            return
+
+        session.add(
+            Event(
+                event_type="certificate.expiring",
+                certificate_id=certificate.id,
+                details={
+                    "domains": certificate.domains,
+                    "expires_at": expiry.isoformat(),
+                },
+            )
+        )
+        await session.commit()
+        await self._dispatch_webhook(session, "certificate.expiring", certificate)
+
+    def _deploy_result(
+        self,
+        result: IssuanceResult,
+        issuer: str | None,
+    ) -> Path | None:
+        """Deploy renewed artifacts when deployment is enabled for the scheduler."""
+        if self._deployment is None:
+            return None
+        deployed = deploy_issuance_result(
+            result,
+            self._deployment.root,
+            permissions_cert=self._deployment.permissions_cert,
+            permissions_key=self._deployment.permissions_key,
+            issuer=issuer,
+        )
+        return deployed.directory
 
     async def _record_failure(
         self,

@@ -171,6 +171,35 @@ async def test_rebuild_jobs_schedules_valid_certificates(
 
 
 @pytest.mark.anyio
+async def test_rebuild_jobs_records_expiring_event_once(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Startup reconstruction emits one expiring event inside the renewal window."""
+    await _create_certificate(
+        session_factory,
+        expiry=dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=5),
+    )
+    renewal_scheduler = RenewalScheduler(
+        session_factory=session_factory,
+        backend=RecordingBackend(),
+        config=RenewalConfig(window_days=30),
+        scheduler=AsyncIOScheduler(timezone=dt.timezone.utc),
+    )
+
+    assert await renewal_scheduler.rebuild_jobs() == 1
+    assert await renewal_scheduler.rebuild_jobs() == 1
+
+    async with session_factory() as session:
+        events = (
+            await session.execute(
+                select(Event).where(Event.event_type == "certificate.expiring")
+            )
+        ).scalars().all()
+
+    assert len(events) == 1
+
+
+@pytest.mark.anyio
 async def test_successful_renewal_updates_status_and_records_attempt(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
