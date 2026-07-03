@@ -35,6 +35,22 @@ Before implementing metrics, decide:
 * TLS-ALPN-01 support.
 * ACME External Account Binding (EAB).
 
+### Pebble / Staging E2E Tests
+
+The default test suite should stay deterministic and mock-backed, but a separate
+real-ACME compatibility suite would be useful for hardening releases.
+
+Potential shape:
+
+* Add `tests/e2e/` with `@pytest.mark.e2e` tests excluded from the default gate.
+* Add a `make e2e` target that only runs when explicit prerequisites are present.
+* Exercise `acme.sh` against Pebble or Let's Encrypt staging with DNS-01 credentials
+  supplied through secrets or local env files.
+* Verify the minimal full path: app/container starts, certificate request is accepted,
+  ACME issuance succeeds, artifacts deploy, and the certificate becomes `valid`.
+* Run in CI only through `workflow_dispatch`, scheduled nightly jobs, or protected
+  secret-backed environments to avoid flaky pull request gates.
+
 ## Deployment Targets
 
 * Remote deployment targets such as SSH, Kubernetes Secrets, S3-compatible object storage, or Vault.

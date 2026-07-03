@@ -2,7 +2,7 @@
 
 > Derived from `docs/outline.md`. Targets Python 3.14, strict mypy, 80% per-file coverage gate.
 > Phase 0/1 foundation exists: package skeleton, config loading, structured logging, request IDs, health endpoint, and tests are wired.
-> Phases 2-9 now provide the core DB models, backend abstraction, auth, API routes, atomic deployer, renewal scheduler, webhook dispatcher, lifecycle orchestration, and health/readiness probes.
+> Phases 2-12.5 now provide the core DB models, backend abstraction, auth, API routes, atomic deployer, renewal scheduler, webhook dispatcher, lifecycle orchestration, health/readiness probes, Docker packaging, OpenAPI/README polish, integration tests, and CI.
 > Implementation lesson: lifecycle behavior belongs behind an application service boundary so FastAPI routes and APScheduler callbacks stay thin while backend calls, artifact deployment, state changes, scheduling, audit events, and webhooks remain testable together.
 
 ---
@@ -161,7 +161,7 @@ Accounts and providers are exposed through read-only API endpoints, but are not 
 
 **Acceptance:** All endpoints respond with correct status codes; input validation via Pydantic schemas; database CRUD wired end-to-end; OpenAPI docs at `/docs` reflect the API.
 
-**Implementation note:** The current Phase 5 route layer is DB-backed and RBAC-protected, but certificate creation and manual renewal do not yet run the ACME backend/deployer. That is now tracked explicitly in Phase 8.5.
+**Implementation note:** Phase 5 initially introduced the DB-backed, RBAC-protected route layer. Phase 8.5 later wired certificate creation and manual renewal to the ACME backend, deployer, scheduler, audit events, and webhooks.
 
 ---
 
@@ -188,7 +188,7 @@ Accounts and providers are exposed through read-only API endpoints, but are not 
 
 **Acceptance:** Deployment produces correct file layout; atomic rename guarantees consumers never see partial writes; filesystem permissions are set correctly (`0644` for certs, `0600` for keys).
 
-**Implementation note:** The deployer is implemented as a reusable boundary. It is not yet called from certificate issuance/renewal flows; that wiring belongs in Phase 8.5.
+**Implementation note:** The deployer is implemented as a reusable boundary and is called from successful issuance and renewal flows after Phase 8.5 lifecycle wiring.
 
 ---
 
@@ -206,7 +206,7 @@ Accounts and providers are exposed through read-only API endpoints, but are not 
 
 **Acceptance:** Certificates within renewal window are picked up on startup; scheduled jobs execute and trigger backend renewal; failures logged and reflected in certificate status.
 
-**Implementation note:** The scheduler can renew valid certificates through an injected backend and emit renewed/failed webhooks. Deployment after renewal and full lifecycle integration are tracked in Phase 8.5.
+**Implementation note:** The scheduler renews valid certificates through an injected backend, deploys renewed artifacts when configured, records renewal attempts, emits renewed/failed webhooks, and reconstructs renewal jobs on startup.
 
 ---
 
@@ -223,7 +223,7 @@ Accounts and providers are exposed through read-only API endpoints, but are not 
 
 **Acceptance:** Webhooks fire on all lifecycle events; payload matches spec; HMAC signature verifiable by consumer; failed deliveries retried and logged.
 
-**Implementation note:** The webhook dispatcher, HMAC signing, retry handling, DB-backed subscriptions, and failed-delivery audit events are implemented. Not every lifecycle event is emitted by route/service flows yet; that wiring belongs in Phase 8.5.
+**Implementation note:** The webhook dispatcher, HMAC signing, retry handling, DB-backed subscriptions, and failed-delivery audit events are implemented. Phase 8.5 wired lifecycle events from route/service and scheduler flows.
 
 ---
 

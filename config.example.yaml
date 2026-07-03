@@ -12,6 +12,7 @@ database:
 
 deployment:
   directory: /certificates
+  permissions_cert: 420 # 0o644 in decimal
   permissions_key: 384 # 0o600 in decimal
 
 acme:

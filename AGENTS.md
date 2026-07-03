@@ -14,8 +14,8 @@
 ## Directory Layout
 
 ```
-acme_api/          # main package (currently empty — awaiting implementation)
-tests/             # pytest test suite; fixtures in tests/fixtures/
+acme_api/          # main package: API, auth, DB, backend wrapper, scheduler, webhooks
+tests/             # pytest test suite; integration tests and fixtures live here
 dev/               # helper scripts (e.g. per-file coverage checker)
 docs/              # project outline and design docs
 Makefile           # all build/lint/test commands
@@ -41,6 +41,7 @@ Makefile           # all build/lint/test commands
 | `make isort` | Check import ordering (--check-only --diff). |
 | `make format` | Apply isort formatting in-place. |
 | `make combined-check` | Run typecheck, lint, flake8, isort, check-max-lines, and test in one shot. |
+| `make simulate-ci` | Run the GitHub Actions workflow locally with `act` (requires ACT_* env settings). |
 | `make build` | Build Docker image via docker compose. |
 | `make start` | Start the service (depends on build). |
 | `make stop` | Stop the service. |
@@ -48,7 +49,7 @@ Makefile           # all build/lint/test commands
 
 ## Fixtures And Documentation
 
-- Tests live in `tests/`; fixtures in `tests/fixtures/`.
+- Tests live in `tests/`; end-to-end mock-backed integration tests live in `tests/integration/`; fixtures live in `tests/fixtures/`.
 - Use `make test` (not raw pytest) to ensure coverage gates are enforced.
 - Update `README.md` with project description, installation instructions, usage, and other relevant information.
 - Update this file (`AGENTS.md`) with useful information that may help future agents.

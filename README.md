@@ -2,9 +2,14 @@
 
 Lightweight, self-hosted REST service for managing ACME certificates through a modern API while delegating ACME protocol work to `acme.sh`.
 
+## Warning
+
+This project is grossly experimental. Do not use it for production, important
+certificates, or anything you are not prepared to delete and rebuild.
+
 ## Status
 
-Prototype v1 implementation. The core API, SQLite state, API key auth, `acme.sh` backend wrapper, atomic certificate deployment, renewal scheduler, lifecycle webhooks, health/readiness probes, and Docker packaging are implemented. End-to-end staging/Pebble integration tests are still planned.
+Prototype v1 implementation. The core API, SQLite state, API key auth, `acme.sh` backend wrapper, atomic certificate deployment, renewal scheduler, lifecycle webhooks, health/readiness probes, Docker packaging, mock-backed end-to-end integration tests, and GitHub Actions CI are implemented. Real staging/Pebble ACME tests remain optional and credential-gated.
 
 ## Quick Start
 
@@ -42,10 +47,15 @@ Useful targets:
 | `make typecheck` | Run strict mypy |
 | `make lint` | Run flake8 and pylint |
 | `make isort` | Check import ordering |
+| `make check-max-lines` | Enforce file size limits |
+| `make combined-check` | Run the full local release gate |
+| `make simulate-ci` | Run the GitHub Actions workflow locally with `act` |
 | `make build` | Build the Docker image |
 | `make start` | Start the Docker compose service |
 | `make stop` | Stop the Docker compose service |
 | `make logs` | Follow container logs |
+
+`make simulate-ci` requires `act` settings in the shell or `.env`: `ACT_VERSION`, `ACT_PLATFORM`, and `ACT_IMAGE`.
 
 ## Configuration
 
@@ -136,4 +146,3 @@ The public API is independent of the ACME backend. v1 supports DNS-01 through `a
 - web UI
 - high availability or clustering
 - implementing the ACME protocol directly
-

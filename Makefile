@@ -9,6 +9,10 @@ MYPY_PATHS ?= acme_api tests
 MAX_FILE_LINES ?= 500
 MAX_FILE_LINES_PATHS ?= acme_api tests
 
+ACT_VERSION ?= 0.2.89
+ACT_PLATFORM ?= Linux_x86_64
+ACT_IMAGE ?= ghcr.io/catthehacker/ubuntu:full-24.04
+
 ifneq (,$(wildcard $(ROOT_PATH)/.env))
 include $(ROOT_PATH)/.env
 export
