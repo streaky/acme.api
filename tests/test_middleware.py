@@ -7,7 +7,7 @@ from typing import Any, Callable, Generator
 
 import pytest
 from fastapi import FastAPI, Request
-from httpx import ASGITransport, AsyncClient
+from httpx2 import ASGITransport, AsyncClient
 
 from acme_api.config import AppSettings, DatabaseConfig, DeploymentConfig
 from acme_api.logging import request_id as _request_id_ctxvar

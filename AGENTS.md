@@ -40,6 +40,7 @@ Makefile           # all build/lint/test commands
 | `make lint` | Run flake8 + pylint (fail-under 10.0). |
 | `make isort` | Check import ordering (--check-only --diff). |
 | `make format` | Apply isort formatting in-place. |
+| `make check-forbidden-imports` | Reject imports of intentionally unsupported packages. |
 | `make combined-check` | Run typecheck, lint, flake8, isort, check-max-lines, and test in one shot. |
 | `make simulate-ci` | Run the GitHub Actions workflow locally with `act` (requires ACT_* env settings). |
 | `make build` | Build Docker image via docker compose. |

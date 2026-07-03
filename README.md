@@ -48,6 +48,7 @@ Useful targets:
 | `make lint` | Run flake8 and pylint |
 | `make isort` | Check import ordering |
 | `make check-max-lines` | Enforce file size limits |
+| `make check-forbidden-imports` | Reject imports of intentionally unsupported packages |
 | `make combined-check` | Run the full local release gate |
 | `make simulate-ci` | Run the GitHub Actions workflow locally with `act` |
 | `make build` | Build the Docker image |
