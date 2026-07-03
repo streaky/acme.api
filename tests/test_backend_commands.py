@@ -229,6 +229,19 @@ class TestParsing:
             "CF_Account_ID": "abc123",
         }
 
+    def test_load_env_vars_ignores_blocked_and_invalid_names(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        env_file = tmp_path / "dns.env"
+        env_file.write_text(
+            "PATH=/tmp/evil\nCF_API_TOKEN=token\nINVALID-KEY=value\n",
+            encoding="utf-8",
+        )
+
+        assert _load_env_vars(env_file) == {
+            "CF_API_TOKEN": "token",
+        }
+
 
 class TestErrorClassification:
     """Verify subprocess failures map to retryable or terminal errors."""

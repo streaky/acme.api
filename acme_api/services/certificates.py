@@ -11,10 +11,14 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from acme_api.backend.acmesh_backend import AcmeShError, TransientAcmeShError
+from acme_api.backend.acmesh_backend import (
+    AcmeShBackend,
+    AcmeShError,
+    TransientAcmeShError,
+)
 from acme_api.backend.protocol import AcmeBackend
 from acme_api.config import AcmeAccountConfig, AppSettings, DnsProviderConfig
-from acme_api.deployer import DeploymentError, deploy_issuance_result
+from acme_api.deployer import DeploymentError, DeploymentOptions, deploy_issuance_result
 from acme_api.models.certificate import Certificate, CertificateStatus
 from acme_api.models.event import Event
 from acme_api.schemas.certificate import CertificateCreate
@@ -126,9 +130,16 @@ class CertificateLifecycleService:
                 deployed = deploy_issuance_result(
                     result,
                     self._settings.deployment.directory,
-                    permissions_cert=self._settings.deployment.permissions_cert,
-                    permissions_key=self._settings.deployment.permissions_key,
-                    issuer=certificate.acme_account_ref,
+                    options=DeploymentOptions(
+                        permissions_cert=self._settings.deployment.permissions_cert,
+                        permissions_key=self._settings.deployment.permissions_key,
+                        issuer=certificate.acme_account_ref,
+                        allowed_source_roots=(
+                            [self._settings.acme.home_dir]
+                            if isinstance(self._backend, AcmeShBackend)
+                            else None
+                        ),
+                    ),
                 )
             except (AcmeShError, DeploymentError) as exc:
                 await self._mark_failed(session, certificate, exc)

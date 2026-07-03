@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Callable, Generator
+from typing import Any, Callable, Generator, cast
 
 import pytest
 from fastapi import FastAPI, Request
@@ -74,31 +74,55 @@ async def test_middleware_preserves_incoming_request_id(tmp_path: Path) -> None:
     assert resp.headers["x-request-id"] == "external-123"
 
 
-def test_get_request_id_rejects_crlf_injection() -> None:
-    """CRLF bytes in request ID are rejected and replaced."""
+async def _request_id_for_raw_header(value: bytes) -> str:
+    """Return response request ID after passing a raw header through middleware."""
     from acme_api.middleware import RequestIdMiddleware
 
+    messages: list[dict[str, Any]] = []
+
+    async def _app(
+        _scope: dict[str, Any],
+        _receive: Callable[..., Any],
+        send: Callable[[dict[str, Any]], Any],
+    ) -> None:  # noqa: ANN401
+        await send({"type": "http.response.start", "status": 204})
+
+    async def _receive() -> dict[str, Any]:
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def _send(message: dict[str, Any]) -> None:
+        messages.append(message)
+
+    middleware = RequestIdMiddleware(app=_app)
     scope = {
-        "headers": [(b"x-request-id", b"legit-id\r\nX-Injected: evil")],
+        "type": "http",
+        "path": "/",
+        "headers": [(b"x-request-id", value)],
     }
+    await middleware(scope, _receive, _send)
 
-    rid = RequestIdMiddleware._get_request_id(scope)
+    response_headers = cast(dict[bytes, bytes], dict(messages[0]["headers"]))
+    return response_headers[b"x-request-id"].decode("ascii")
 
-    assert rid != "legit-id\r\nX-Injected: evil"
+
+@pytest.mark.anyio
+async def test_get_request_id_rejects_crlf_injection() -> None:
+    """CRLF bytes in request ID are rejected and replaced."""
+    bad_request_id = "legit-id\r\nX-Injected: evil"
+
+    rid = await _request_id_for_raw_header(bad_request_id.encode("latin-1"))
+
+    assert rid != bad_request_id
     assert "\r" not in rid
     assert "\n" not in rid
 
 
-def test_get_request_id_rejects_oversized_value() -> None:
+@pytest.mark.anyio
+async def test_get_request_id_rejects_oversized_value() -> None:
     """Overly long request IDs are rejected and replaced."""
-    from acme_api.middleware import RequestIdMiddleware
-
     oversized = "a" * 129
-    scope = {
-        "headers": [(b"x-request-id", oversized.encode("ascii"))],
-    }
 
-    rid = RequestIdMiddleware._get_request_id(scope)
+    rid = await _request_id_for_raw_header(oversized.encode("ascii"))
 
     assert rid != oversized
     assert len(rid) > 0

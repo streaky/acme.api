@@ -6,10 +6,12 @@ import asyncio
 import dataclasses as dc
 import hashlib
 import hmac
+import ipaddress
 import json
 import uuid
 from datetime import datetime, timezone
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx2
 from sqlalchemy import select
@@ -60,6 +62,40 @@ class WebhookPayload:
 
 class WebhookDeliveryError(Exception):
     """Raised when a webhook delivery exhausts all retry attempts."""
+
+
+def _validate_webhook_url(url: str) -> None:
+    """Validate webhook destination URL before making network calls."""
+    parsed = urlsplit(url)
+    if parsed.scheme not in {"http", "https"}:
+        raise WebhookDeliveryError("unsafe webhook url: only http/https are allowed")
+    if not parsed.hostname:
+        raise WebhookDeliveryError("unsafe webhook url: missing hostname")
+
+    host = parsed.hostname.lower()
+    if host == "localhost":
+        raise WebhookDeliveryError("unsafe webhook url: localhost is not allowed")
+
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return
+
+    if _is_unsafe_webhook_ip(ip):
+        raise WebhookDeliveryError("unsafe webhook url: non-public IP targets are not allowed")
+
+
+def _is_unsafe_webhook_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    """Return whether an IP address is unsafe for outbound webhooks."""
+    unsafe_flags = (
+        ip.is_private,
+        ip.is_loopback,
+        ip.is_link_local,
+        ip.is_multicast,
+        ip.is_reserved,
+        ip.is_unspecified,
+    )
+    return any(unsafe_flags)
 
 
 def encode_payload(payload: WebhookPayload) -> bytes:
@@ -169,6 +205,8 @@ class WebhookDispatcher:
         """Deliver a single webhook subscription with retry."""
         if self._client is None:
             raise RuntimeError("WebhookDispatcher must be used as an async context manager")
+
+        _validate_webhook_url(config.url)
 
         body = encode_payload(payload)
         headers = {

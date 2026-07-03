@@ -18,6 +18,21 @@ from acme_api.backend.protocol import AcmeBackend, ChallengeMethod
 
 logger = logging.getLogger(__name__)
 
+_ENV_KEY_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_BLOCKED_ENV_KEYS = {
+    "PATH",
+    "HOME",
+    "LD_PRELOAD",
+    "LD_LIBRARY_PATH",
+    "PYTHONPATH",
+    "PYTHONHOME",
+    "VIRTUAL_ENV",
+    "IFS",
+    "ENV",
+    "BASH_ENV",
+    "SHELL",
+}
+
 
 _PATH_PATTERNS = {
     "cert": (
@@ -328,7 +343,18 @@ def _load_env_vars(env_vars_file: pathlib.Path) -> dict[str, str]:
             line = line[len("export ") :]
         key, separator, value = line.partition("=")
         if separator:
-            result[key.strip()] = shlex.split(value.strip())[0] if value.strip() else ""
+            key = key.strip()
+            if not _ENV_KEY_PATTERN.fullmatch(key):
+                logger.warning("Ignoring invalid env var name from %s: %r", env_vars_file, key)
+                continue
+            if key.upper() in _BLOCKED_ENV_KEYS:
+                logger.warning(
+                    "Ignoring blocked env var name from %s: %s",
+                    env_vars_file,
+                    key,
+                )
+                continue
+            result[key] = shlex.split(value.strip())[0] if value.strip() else ""
     return result
 
 

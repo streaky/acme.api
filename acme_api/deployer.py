@@ -6,6 +6,7 @@ import dataclasses as dc
 import json
 import os
 import shutil
+import stat
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -62,6 +63,16 @@ class DeploymentMetadata:
         }
 
 
+@dc.dataclass(frozen=True)
+class DeploymentOptions:
+    """Options that control certificate deployment behavior."""
+
+    permissions_cert: int = 0o644
+    permissions_key: int = 0o600
+    issuer: str | None = None
+    allowed_source_roots: list[Path] | None = None
+
+
 class DeploymentError(Exception):
     """Raised when certificate artifacts cannot be deployed safely."""
 
@@ -70,18 +81,14 @@ def deploy_issuance_result(
     result: IssuanceResult,
     deployment_root: Path,
     *,
-    permissions_cert: int = 0o644,
-    permissions_key: int = 0o600,
-    issuer: str | None = None,
+    options: DeploymentOptions | None = None,
 ) -> DeploymentPaths:
     """Deploy files from an ACME issuance or renewal result.
 
     Args:
         result: Backend result containing source artifact paths and issued domains.
         deployment_root: Root directory such as ``/certificates``.
-        permissions_cert: POSIX mode for public certificate artifacts.
-        permissions_key: POSIX mode for the private key.
-        issuer: Optional issuer string to include in metadata.
+        options: Optional deployment behavior overrides.
 
     Returns:
         Paths to the deployed certificate artifacts.
@@ -89,12 +96,13 @@ def deploy_issuance_result(
     Raises:
         DeploymentError: If domains are missing, unsafe, or source files are absent.
     """
+    options = options or DeploymentOptions()
     cert = result.cert
     metadata = DeploymentMetadata(
         primary_domain=_primary_domain(result.domains),
         domains=list(result.domains),
         expires_at=cert.expires_at,
-        issuer=issuer,
+        issuer=options.issuer,
         source_cert_path=cert.cert_path,
         source_chain_path=cert.chain_path,
         source_fullchain_path=cert.fullchain_path,
@@ -104,8 +112,9 @@ def deploy_issuance_result(
         domains=result.domains,
         deployment_root=deployment_root,
         metadata=metadata,
-        permissions_cert=permissions_cert,
-        permissions_key=permissions_key,
+        permissions_cert=options.permissions_cert,
+        permissions_key=options.permissions_key,
+        allowed_source_roots=options.allowed_source_roots,
     )
 
 
@@ -117,56 +126,30 @@ def deploy_certificate_artifacts(  # pylint: disable=too-many-arguments
     metadata: DeploymentMetadata | None = None,
     permissions_cert: int = 0o644,
     permissions_key: int = 0o600,
+    allowed_source_roots: list[Path] | None = None,
 ) -> DeploymentPaths:
     """Atomically deploy certificate files under the primary domain directory."""
     primary_domain = _primary_domain(domains)
     target_dir = deployment_root / _safe_domain_dir_name(primary_domain)
     target_dir.mkdir(parents=True, exist_ok=True)
 
-    source_paths = {
-        CERT_FILE_NAME: Path(cert.cert_path),
-        CHAIN_FILE_NAME: Path(cert.chain_path),
-        FULLCHAIN_FILE_NAME: Path(cert.fullchain_path),
-        PRIVKEY_FILE_NAME: Path(cert.privkey_path),
-    }
-    _validate_source_files(source_paths)
+    source_paths = _source_paths(cert)
+    _validate_source_files(source_paths, allowed_source_roots)
 
-    if metadata is None:
-        metadata = DeploymentMetadata(
-            primary_domain=primary_domain,
-            domains=list(domains),
-            expires_at=cert.expires_at,
-            source_cert_path=cert.cert_path,
-            source_chain_path=cert.chain_path,
-            source_fullchain_path=cert.fullchain_path,
-        )
+    metadata = metadata or _metadata_for_cert(cert, domains, primary_domain)
 
     temp_dir = Path(tempfile.mkdtemp(prefix=".deploy-", dir=target_dir))
     try:
-        for file_name, source_path in source_paths.items():
-            mode = permissions_key if file_name == PRIVKEY_FILE_NAME else permissions_cert
-            _copy_fsync_chmod(source_path, temp_dir / f"{file_name}.tmp", mode)
-
-        metadata_bytes = json.dumps(
-            metadata.to_json_dict(),
-            indent=2,
-            sort_keys=True,
-        ).encode("utf-8")
-        _write_fsync_chmod(
-            temp_dir / f"{METADATA_FILE_NAME}.tmp",
-            metadata_bytes,
-            permissions_cert,
+        _write_temp_artifacts(
+            temp_dir=temp_dir,
+            source_paths=source_paths,
+            metadata=metadata,
+            permissions_cert=permissions_cert,
+            permissions_key=permissions_key,
         )
         _fsync_directory(temp_dir)
 
-        for file_name in (
-            CERT_FILE_NAME,
-            CHAIN_FILE_NAME,
-            FULLCHAIN_FILE_NAME,
-            PRIVKEY_FILE_NAME,
-            METADATA_FILE_NAME,
-        ):
-            os.replace(temp_dir / f"{file_name}.tmp", target_dir / file_name)
+        _replace_artifacts(temp_dir, target_dir)
         _fsync_directory(target_dir)
     except OSError as exc:
         raise DeploymentError(f"failed to deploy certificate artifacts: {exc}") from exc
@@ -180,6 +163,69 @@ def deploy_certificate_artifacts(  # pylint: disable=too-many-arguments
         fullchain_path=target_dir / FULLCHAIN_FILE_NAME,
         privkey_path=target_dir / PRIVKEY_FILE_NAME,
         metadata_path=target_dir / METADATA_FILE_NAME,
+    )
+
+
+def _write_temp_artifacts(
+    *,
+    temp_dir: Path,
+    source_paths: dict[str, Path],
+    metadata: DeploymentMetadata,
+    permissions_cert: int,
+    permissions_key: int,
+) -> None:
+    """Write all deployment artifacts into the temporary directory."""
+    for file_name, source_path in source_paths.items():
+        mode = permissions_key if file_name == PRIVKEY_FILE_NAME else permissions_cert
+        _copy_fsync_chmod(source_path, temp_dir / f"{file_name}.tmp", mode)
+
+    metadata_bytes = json.dumps(
+        metadata.to_json_dict(),
+        indent=2,
+        sort_keys=True,
+    ).encode("utf-8")
+    _write_fsync_chmod(
+        temp_dir / f"{METADATA_FILE_NAME}.tmp",
+        metadata_bytes,
+        permissions_cert,
+    )
+
+
+def _replace_artifacts(temp_dir: Path, target_dir: Path) -> None:
+    """Atomically replace target artifacts with staged temporary files."""
+    for file_name in (
+        CERT_FILE_NAME,
+        CHAIN_FILE_NAME,
+        FULLCHAIN_FILE_NAME,
+        PRIVKEY_FILE_NAME,
+        METADATA_FILE_NAME,
+    ):
+        os.replace(temp_dir / f"{file_name}.tmp", target_dir / file_name)
+
+
+def _source_paths(cert: CertExpiry) -> dict[str, Path]:
+    """Return deployment destination names mapped to source artifact paths."""
+    return {
+        CERT_FILE_NAME: Path(cert.cert_path),
+        CHAIN_FILE_NAME: Path(cert.chain_path),
+        FULLCHAIN_FILE_NAME: Path(cert.fullchain_path),
+        PRIVKEY_FILE_NAME: Path(cert.privkey_path),
+    }
+
+
+def _metadata_for_cert(
+    cert: CertExpiry,
+    domains: list[str],
+    primary_domain: str,
+) -> DeploymentMetadata:
+    """Build default deployment metadata from certificate artifacts."""
+    return DeploymentMetadata(
+        primary_domain=primary_domain,
+        domains=list(domains),
+        expires_at=cert.expires_at,
+        source_cert_path=cert.cert_path,
+        source_chain_path=cert.chain_path,
+        source_fullchain_path=cert.fullchain_path,
     )
 
 
@@ -199,8 +245,12 @@ def _safe_domain_dir_name(domain: str) -> str:
     return domain
 
 
-def _validate_source_files(source_paths: dict[str, Path]) -> None:
-    """Ensure all source artifact paths exist and are regular files."""
+def _validate_source_files(
+    source_paths: dict[str, Path],
+    allowed_source_roots: list[Path] | None = None,
+) -> None:
+    """Ensure all source artifact paths are safe regular files."""
+    normalized_roots = [root.resolve() for root in (allowed_source_roots or [])]
     missing = [
         f"{name}: {path}"
         for name, path in source_paths.items()
@@ -210,6 +260,25 @@ def _validate_source_files(source_paths: dict[str, Path]) -> None:
         raise DeploymentError(
             "missing certificate source artifact(s): " + ", ".join(missing)
         )
+
+    unsafe: list[str] = []
+    for name, path in source_paths.items():
+        if path.is_symlink():
+            unsafe.append(f"{name}: {path} (symlinks are not allowed)")
+            continue
+
+        mode = path.lstat().st_mode
+        if not stat.S_ISREG(mode):
+            unsafe.append(f"{name}: {path} (not a regular file)")
+            continue
+
+        if normalized_roots:
+            resolved = path.resolve()
+            if not any(resolved.is_relative_to(root) for root in normalized_roots):
+                unsafe.append(f"{name}: {path} (outside allowed source roots)")
+
+    if unsafe:
+        raise DeploymentError("unsafe certificate source artifact(s): " + ", ".join(unsafe))
 
 
 def _copy_fsync_chmod(source: Path, destination: Path, mode: int) -> None:

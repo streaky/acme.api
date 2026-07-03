@@ -20,7 +20,7 @@ from acme_api.backend.acmesh_backend import AcmeShError, TransientAcmeShError
 from acme_api.backend.dataclasses import IssuanceResult
 from acme_api.backend.protocol import AcmeBackend
 from acme_api.config import RenewalConfig
-from acme_api.deployer import DeploymentError, deploy_issuance_result
+from acme_api.deployer import DeploymentError, DeploymentOptions, deploy_issuance_result
 from acme_api.models.certificate import Certificate, CertificateStatus
 from acme_api.models.event import Event
 from acme_api.models.renewal_attempt import RenewalAttempt
@@ -37,6 +37,7 @@ class RenewalDeploymentConfig:
     root: Path
     permissions_cert: int = 0o644
     permissions_key: int = 0o600
+    allowed_source_roots: list[Path] | None = None
 
 
 class RenewalScheduler:
@@ -224,9 +225,12 @@ class RenewalScheduler:
         deployed = deploy_issuance_result(
             result,
             self._deployment.root,
-            permissions_cert=self._deployment.permissions_cert,
-            permissions_key=self._deployment.permissions_key,
-            issuer=issuer,
+            options=DeploymentOptions(
+                permissions_cert=self._deployment.permissions_cert,
+                permissions_key=self._deployment.permissions_key,
+                issuer=issuer,
+                allowed_source_roots=self._deployment.allowed_source_roots,
+            ),
         )
         return deployed.directory
 

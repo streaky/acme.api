@@ -10,6 +10,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+_MAX_FQDN_LENGTH = 253
+
 
 class CertificateStatus(StrEnum):
     """Lifecycle states a certificate can occupy."""
@@ -53,6 +55,11 @@ class CertificateCreate(BaseModel):
             if not pattern.match(domain):
                 raise ValueError(
                     f"Domain {domain!r} does not match a valid DNS label pattern."
+                )
+            normalized = domain[2:] if domain.startswith("*.") else domain
+            if len(normalized) > _MAX_FQDN_LENGTH:
+                raise ValueError(
+                    f"Domain {domain!r} exceeds maximum length of {_MAX_FQDN_LENGTH} characters."
                 )
         return v
 

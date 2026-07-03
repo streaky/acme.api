@@ -181,3 +181,47 @@ async def test_dispatch_logs_failed_delivery(db_session: AsyncSession) -> None:
     assert delivered == 0
     assert len(events) == 1
     assert events[0].details["event"] == "certificate.failed"
+
+
+@pytest.mark.anyio
+async def test_dispatch_rejects_unsafe_webhook_targets(db_session: AsyncSession) -> None:
+    """Unsafe webhook targets are blocked before any network call."""
+    certificate = Certificate(
+        name="unsafe-hook-cert",
+        domains=["unsafe-hook.example.com"],
+        acme_account_ref="le",
+        dns_provider_ref="cf",
+        status=CertificateStatus.VALID,
+    )
+    db_session.add(certificate)
+    db_session.add(
+        WebhookConfig(
+            url="http://127.0.0.1/internal",
+            events=["certificate.failed"],
+            secret="shared-secret",
+        )
+    )
+    await db_session.commit()
+
+    attempts = 0
+
+    def handler(_request: httpx2.Request) -> httpx2.Response:
+        nonlocal attempts
+        attempts += 1
+        return httpx2.Response(204)
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
+        async with WebhookDispatcher(db_session, client=client) as dispatcher:
+            delivered = await dispatcher.dispatch_certificate_event(
+                "certificate.failed", certificate
+            )
+
+    events = (
+        await db_session.execute(
+            select(Event).where(Event.event_type == "webhook.delivery_failed")
+        )
+    ).scalars().all()
+    assert delivered == 0
+    assert attempts == 0
+    assert len(events) == 1
+    assert "unsafe webhook url" in str(events[0].details["error"])

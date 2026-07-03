@@ -85,6 +85,17 @@ class TestCertificateCreate:
         )
         assert "*.example.com" in cert.domains
 
+    def test_domain_validation_rejects_overlong_fqdn(self) -> None:
+        """Domains longer than RFC max length should fail validation."""
+        too_long = ".".join(["a" * 63, "b" * 63, "c" * 63, "d" * 62])
+        with pytest.raises(ValueError, match="exceeds maximum length"):
+            CertificateCreate(
+                name="my-cert",
+                domains=[too_long],
+                acme_account_ref="acme-acc",
+                dns_provider_ref="dns-prov",
+            )
+
     def test_empty_domains_raises(self) -> None:
         """An empty domains list should raise (min_length=1)."""
         with pytest.raises(ValueError):

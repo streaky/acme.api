@@ -13,6 +13,7 @@ import pytest
 from acme_api.backend.dataclasses import CertExpiry, IssuanceResult
 from acme_api.deployer import (
     DeploymentError,
+    DeploymentOptions,
     deploy_certificate_artifacts,
     deploy_issuance_result,
 )
@@ -52,7 +53,11 @@ def test_deploy_issuance_result_writes_expected_layout(tmp_path: pathlib.Path) -
         domains=["example.com", "www.example.com"],
     )
 
-    deployed = deploy_issuance_result(result, tmp_path / "certificates", issuer="test-ca")
+    deployed = deploy_issuance_result(
+        result,
+        tmp_path / "certificates",
+        options=DeploymentOptions(issuer="test-ca"),
+    )
 
     assert deployed.directory == tmp_path / "certificates" / "example.com"
     assert deployed.cert_path.read_bytes() == b"server-cert\n"
@@ -107,6 +112,37 @@ def test_missing_source_file_raises(tmp_path: pathlib.Path) -> None:
             cert=cert,
             domains=["example.com"],
             deployment_root=tmp_path / "certificates",
+        )
+
+
+def test_symlink_source_file_raises(tmp_path: pathlib.Path) -> None:
+    """Deployment rejects symlinked source artifacts."""
+    cert = _write_sources(tmp_path)
+    cert_path = pathlib.Path(cert.cert_path)
+    target_bytes = cert_path.read_bytes()
+    cert_path.unlink()
+    real_cert = cert_path.parent / "real-cert.pem"
+    real_cert.write_bytes(target_bytes)
+    cert_path.symlink_to(real_cert)
+
+    with pytest.raises(DeploymentError, match="unsafe certificate source"):
+        deploy_certificate_artifacts(
+            cert=cert,
+            domains=["example.com"],
+            deployment_root=tmp_path / "certificates",
+        )
+
+
+def test_source_outside_allowed_root_raises(tmp_path: pathlib.Path) -> None:
+    """Deployment rejects source artifacts resolved outside allowed roots."""
+    cert = _write_sources(tmp_path)
+
+    with pytest.raises(DeploymentError, match="outside allowed source roots"):
+        deploy_certificate_artifacts(
+            cert=cert,
+            domains=["example.com"],
+            deployment_root=tmp_path / "certificates",
+            allowed_source_roots=[tmp_path / "other-root"],
         )
 
 
