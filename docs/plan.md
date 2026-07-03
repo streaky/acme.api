@@ -336,6 +336,8 @@ Accounts and providers are exposed through read-only API endpoints, but are not 
 
 **Acceptance:** Integration tests run via `make test`; coverage gate met; default E2E flow works with mock/Pebble-compatible backends; real staging ACME tests are optional and gated on DNS credentials.
 
+**Implementation note:** `tests/integration/` now covers the default mock-backed E2E flow through FastAPI, SQLite, background issuance/renewal, atomic deployment, audit events, webhook delivery through an in-memory HTTP transport, scheduler startup reconstruction for expiring certificates, and endpoint RBAC. Fixture config and DNS env samples live under `tests/fixtures/`. Real ACME staging/Pebble and Docker smoke flows remain optional/gated so `make test` stays deterministic.
+
 ---
 
 ## Phase 12.5 — Continuous Integration
@@ -360,6 +362,8 @@ Accounts and providers are exposed through read-only API endpoints, but are not 
 **Local prerequisites:** `simulate-ci` uses `act`; configure `ACT_VERSION`, `ACT_PLATFORM`, and `ACT_IMAGE` in `.env` or the shell environment.
 
 **Acceptance:** GitHub Actions workflow is committed, `make simulate-ci` passes locally, and the remote workflow passes on the branch/PR.
+
+**Implementation note:** `.github/workflows/ci.yml` runs on pushes, pull requests, and manual dispatch with Python 3.14, installs from the pinned requirements through `make dev`, and executes `make combined-check`. Local `make simulate-ci` is wired through `act`; it requires the documented `ACT_VERSION`, `ACT_PLATFORM`, and `ACT_IMAGE` settings.
 
 ---
 

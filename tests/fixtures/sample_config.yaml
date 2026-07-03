@@ -1,0 +1,24 @@
+log:
+  level: INFO
+  format: json
+database:
+  url: sqlite+aiosqlite:///./data/acme.db
+deployment:
+  directory: /certificates
+acme:
+  binary_path: /usr/local/bin/acme.sh
+  home_dir: /acmesh
+renewal:
+  enabled: true
+  window_days: 30
+dns_providers:
+  - name: cloudflare-main
+    provider_name: cloudflare
+    env_vars_file_path: tests/fixtures/sample_dns.env
+acme_accounts:
+  - name: letsencrypt-staging
+    server_url: https://acme-staging-v02.api.letsencrypt.org/directory
+api_keys:
+  admin: admin-key-12345
+  operator: operator-key-12345
+  readonly: readonly-key-12345
