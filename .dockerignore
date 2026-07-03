@@ -1,0 +1,14 @@
+.git
+.mypy_cache
+.pytest_cache
+.pycache
+.venv
+__pycache__
+*.pyc
+*.egg-info
+.coverage
+coverage-data
+data
+act
+act_*.tar.gz
+
