@@ -8,6 +8,7 @@ import hashlib
 import hmac
 import ipaddress
 import json
+import socket
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -78,11 +79,26 @@ def _validate_webhook_url(url: str) -> None:
 
     try:
         ip = ipaddress.ip_address(host)
-    except ValueError:
+    except ValueError as exc:
+        for resolved_ip in _resolve_host_ips(host):
+            if _is_unsafe_webhook_ip(resolved_ip):
+                raise WebhookDeliveryError(
+                    "unsafe webhook url: non-public IP targets are not allowed"
+                ) from exc
         return
 
     if _is_unsafe_webhook_ip(ip):
         raise WebhookDeliveryError("unsafe webhook url: non-public IP targets are not allowed")
+
+
+def _resolve_host_ips(host: str) -> set[ipaddress.IPv4Address | ipaddress.IPv6Address]:
+    """Resolve a hostname to IP addresses for webhook target validation."""
+    try:
+        results = socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
+    except socket.gaierror as exc:
+        raise WebhookDeliveryError("unsafe webhook url: hostname could not be resolved") from exc
+
+    return {ipaddress.ip_address(result[4][0]) for result in results}
 
 
 def _is_unsafe_webhook_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:

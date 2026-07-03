@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hmac
+import ipaddress
 from collections.abc import AsyncGenerator
 from pathlib import Path
 
@@ -24,6 +25,15 @@ from acme_api.webhooks import (
     encode_payload,
     sign_payload,
 )
+
+
+@pytest.fixture(autouse=True)
+def _public_webhook_dns(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Resolve test webhook hostnames to a public IP without using real DNS."""
+    monkeypatch.setattr(
+        "acme_api.webhooks._resolve_host_ips",
+        lambda _host: {ipaddress.ip_address("93.184.216.34")},
+    )
 
 
 @pytest.fixture()
@@ -225,3 +235,47 @@ async def test_dispatch_rejects_unsafe_webhook_targets(db_session: AsyncSession)
     assert attempts == 0
     assert len(events) == 1
     assert "unsafe webhook url" in str(events[0].details["error"])
+
+
+@pytest.mark.anyio
+async def test_dispatch_rejects_hostname_resolving_to_private_ip(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Webhook validation blocks hostnames that resolve to private addresses."""
+    monkeypatch.setattr(
+        "acme_api.webhooks._resolve_host_ips",
+        lambda _host: {ipaddress.ip_address("10.0.0.10")},
+    )
+    certificate = Certificate(
+        name="private-host-hook-cert",
+        domains=["private-host-hook.example.com"],
+        acme_account_ref="le",
+        dns_provider_ref="cf",
+        status=CertificateStatus.VALID,
+    )
+    db_session.add(certificate)
+    db_session.add(
+        WebhookConfig(
+            url="https://metadata.example.test/hook",
+            events=["certificate.failed"],
+            secret="shared-secret",
+        )
+    )
+    await db_session.commit()
+
+    attempts = 0
+
+    def handler(_request: httpx2.Request) -> httpx2.Response:
+        nonlocal attempts
+        attempts += 1
+        return httpx2.Response(204)
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
+        async with WebhookDispatcher(db_session, client=client) as dispatcher:
+            delivered = await dispatcher.dispatch_certificate_event(
+                "certificate.failed", certificate
+            )
+
+    assert delivered == 0
+    assert attempts == 0

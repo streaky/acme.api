@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import ipaddress
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -179,6 +180,10 @@ def test_full_certificate_lifecycle_with_webhooks(
 ) -> None:
     """Create, issue, deploy, renew, revoke, audit, and deliver webhooks."""
     monkeypatch.setattr(main_module, "WebhookDispatcher", CapturingWebhookDispatcher)
+    monkeypatch.setattr(
+        "acme_api.webhooks._resolve_host_ips",
+        lambda _host: {ipaddress.ip_address("93.184.216.34")},
+    )
     CapturingWebhookDispatcher.reset()
 
     app = _make_app(tmp_path)

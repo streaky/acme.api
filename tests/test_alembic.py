@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 from sqlalchemy import create_engine, text
@@ -68,7 +69,7 @@ datefmt = %H:%M:%S
         env = os.environ.copy()
         env["PYTHONPATH"] = str(PROJECT_ROOT)
         result = subprocess.run(
-            [".venv/bin/alembic", "-c", str(ini_path), "upgrade", "head"],
+            [sys.executable, "-m", "alembic", "-c", str(ini_path), "upgrade", "head"],
             cwd=PROJECT_ROOT,
             env=env,
             text=True,

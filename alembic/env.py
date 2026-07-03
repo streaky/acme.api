@@ -16,7 +16,7 @@ import sys
 from logging.config import fileConfig
 from pathlib import Path
 
-from sqlalchemy import engine_from_config, pool
+from sqlalchemy import engine_from_config, make_url, pool
 
 from alembic import context
 
@@ -53,6 +53,9 @@ def _normalise_url(url: str) -> str:
     The resulting sync engine writes to the *same* database file, which is
     safe because migration scripts execute serially.
     """
+    parsed = make_url(url)
+    if parsed.drivername == "sqlite+aiosqlite":
+        return str(parsed.set(drivername="sqlite"))
     return re.sub(r"^sqlite\+aiosqlite:///", "sqlite:///", url)
 
 
