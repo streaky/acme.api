@@ -74,6 +74,37 @@ async def test_middleware_preserves_incoming_request_id(tmp_path: Path) -> None:
     assert resp.headers["x-request-id"] == "external-123"
 
 
+def test_get_request_id_rejects_crlf_injection() -> None:
+    """CRLF bytes in request ID are rejected and replaced."""
+    from acme_api.middleware import RequestIdMiddleware
+
+    scope = {
+        "headers": [(b"x-request-id", b"legit-id\r\nX-Injected: evil")],
+    }
+
+    rid = RequestIdMiddleware._get_request_id(scope)
+
+    assert rid != "legit-id\r\nX-Injected: evil"
+    assert "\r" not in rid
+    assert "\n" not in rid
+
+
+def test_get_request_id_rejects_oversized_value() -> None:
+    """Overly long request IDs are rejected and replaced."""
+    from acme_api.middleware import RequestIdMiddleware
+
+    oversized = "a" * 129
+    scope = {
+        "headers": [(b"x-request-id", oversized.encode("ascii"))],
+    }
+
+    rid = RequestIdMiddleware._get_request_id(scope)
+
+    assert rid != oversized
+    assert len(rid) > 0
+    assert len(rid) <= 128
+
+
 @pytest.mark.anyio
 async def test_middleware_sets_request_state(tmp_path: Path) -> None:
     """Request ID is available to handlers through request.state."""
