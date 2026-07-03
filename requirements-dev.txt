@@ -13,7 +13,9 @@ aiosqlite==0.22.1
     #   -c requirements.txt
     #   acme.api (pyproject.toml)
 alembic==1.18.5
-    # via acme.api (pyproject.toml)
+    # via
+    #   -c requirements.txt
+    #   acme.api (pyproject.toml)
 annotated-doc==0.0.4
     # via
     #   -c requirements.txt
@@ -92,9 +94,13 @@ isort==8.0.1
 librt==0.12.0
     # via mypy
 mako==1.3.12
-    # via alembic
+    # via
+    #   -c requirements.txt
+    #   alembic
 markupsafe==3.0.3
-    # via mako
+    # via
+    #   -c requirements.txt
+    #   mako
 mccabe==0.7.0
     # via
     #   flake8
@@ -185,6 +191,7 @@ types-pyyaml==6.0.12.20260518
 typing-extensions==4.15.0
     # via
     #   -c requirements.txt
+    #   alembic
     #   alembic
     #   fastapi
     #   mypy

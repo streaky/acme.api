@@ -5,7 +5,7 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from acme_api.auth.hash import hash_api_key
+from acme_api.auth.hash import api_key_lookup_hash, hash_api_key
 from acme_api.config import AppSettings
 from acme_api.models.api_key import APIKey, APIKeyRole
 
@@ -43,12 +43,16 @@ async def seed_initial_keys(db: AsyncSession, settings: AppSettings) -> list[API
             )
         )
         if existing is not None:
+            if existing.key_lookup_hash is None:
+                existing.key_lookup_hash = api_key_lookup_hash(raw_key)
+                await db.commit()
             continue
 
         hashed = hash_api_key(raw_key)
         key_obj = APIKey(
             name=f"bootstrap-{role.value}",
             hashed_key=hashed,
+            key_lookup_hash=api_key_lookup_hash(raw_key),
             role=role,
             is_active=True,
         )

@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid as _uuid
 from dataclasses import dataclass
 from datetime import datetime
+from hashlib import sha256
 from typing import cast
 
 from passlib.hash import pbkdf2_sha512 as _pbkdf2_sha512  # type: ignore[import-untyped]
@@ -12,6 +13,18 @@ from passlib.hash import pbkdf2_sha512 as _pbkdf2_sha512  # type: ignore[import-
 from acme_api.models.api_key import APIKeyRole
 
 _HASH_ROUNDS = 200_000
+
+
+def api_key_lookup_hash(raw_key: str) -> str:
+    """Return a deterministic lookup digest for API key database filtering.
+
+    The digest is not used as the verifier; successful authentication still
+    requires matching the PBKDF2 hash. Its purpose is to avoid checking every
+    active PBKDF2 hash on each request.
+    """
+    if not raw_key:
+        raise ValueError("API key must not be empty.")
+    return sha256(raw_key.encode("utf-8")).hexdigest()
 
 
 def hash_api_key(raw_key: str) -> str:

@@ -53,6 +53,7 @@ class RequestIdMiddleware:
                         break
                 else:
                     hdrs.append((b"x-request-id", rid.encode()))
+                message["headers"] = hdrs
             headers_sent = True
             await send(message)
 

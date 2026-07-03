@@ -40,4 +40,4 @@ class EventRead(BaseModel):
     timestamp: datetime
     event_type: str
     certificate_id: uuid.UUID | None = None
-    details: dict[str, Any] = {}
+    details: dict[str, Any] = Field(default_factory=dict)

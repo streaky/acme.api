@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import typing
+from pathlib import Path
 
 from sqlalchemy import event as sa_event
 from sqlalchemy.ext.asyncio import (
@@ -104,3 +105,20 @@ async def init_db(engine: AsyncEngine) -> None:
     """
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
+
+def run_migrations(settings: AppSettings) -> None:
+    """Run Alembic migrations to the latest revision."""
+    from alembic import command
+    from alembic.config import Config
+
+    source_root = Path(__file__).resolve().parent.parent
+    project_root = next(
+        candidate
+        for candidate in (Path.cwd(), source_root)
+        if (candidate / "alembic.ini").exists() and (candidate / "alembic").is_dir()
+    )
+    config = Config(str(project_root / "alembic.ini"))
+    config.set_main_option("script_location", str(project_root / "alembic"))
+    config.set_main_option("sqlalchemy.url", settings.database.url)
+    command.upgrade(config, "head")

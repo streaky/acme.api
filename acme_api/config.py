@@ -166,8 +166,7 @@ class AppSettings(StrictConfigModel):
         if len(account_names) != len(set(account_names)):
             errors.append("acme_accounts contains duplicate 'name' values")
 
-        # DNS provider env var files should exist (warn-only at startup;
-        # hard-fail when first used). This is informational.
+        # DNS provider env var files must exist before startup succeeds.
         for provider in self.dns_providers:
             if not provider.env_vars_file_path.exists():
                 errors.append(

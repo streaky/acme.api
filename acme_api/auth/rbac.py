@@ -8,7 +8,7 @@ from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from acme_api.auth.hash import AuthenticatedUser, verify_api_key
+from acme_api.auth.hash import AuthenticatedUser, api_key_lookup_hash, verify_api_key
 from acme_api.db import get_db_session
 from acme_api.models.api_key import APIKey, APIKeyRole
 
@@ -77,16 +77,14 @@ async def _authenticate(request: Request, db_session: AsyncSession) -> Authentic
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    statement = select(APIKey).where(APIKey.is_active.is_(True))
-    result = await db_session.execute(statement)
-    api_key = next(
-        (
-            candidate
-            for candidate in result.scalars()
-            if verify_api_key(raw_token, candidate.hashed_key)
-        ),
-        None,
+    lookup_hash = api_key_lookup_hash(raw_token)
+    statement = select(APIKey).where(
+        APIKey.is_active.is_(True),
+        APIKey.key_lookup_hash == lookup_hash,
     )
+    result = await db_session.execute(statement)
+    candidate = result.scalar_one_or_none()
+    api_key = candidate if candidate and verify_api_key(raw_token, candidate.hashed_key) else None
 
     if not api_key:
         raise HTTPException(

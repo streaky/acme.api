@@ -21,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from acme_api.auth.bootstrap import seed_initial_keys
 from acme_api.backend.acmesh_backend import AcmeShBackend, _AcmeShBackendConfig
 from acme_api.config import AppSettings, load_config, prepare_runtime_paths
-from acme_api.db import get_db, get_session_factory, init_db, init_engine
+from acme_api.db import get_db, get_session_factory, init_engine, run_migrations
 from acme_api.logging import setup_logging
 from acme_api.middleware import RequestIdMiddleware
 from acme_api.readiness import readiness_status
@@ -57,9 +57,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         settings.deployment.directory,
     )
 
+    # Apply schema migrations before opening async application sessions.
+    run_migrations(settings)
+
     # Phase 4: initialize engine (sets up session factory) and seed API keys.
     engine = init_engine(settings)
-    await init_db(engine)
     async with get_db() as session:
         created_keys = await seed_initial_keys(session, settings)
         for key in created_keys:

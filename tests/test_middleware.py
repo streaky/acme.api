@@ -133,6 +133,29 @@ async def test_middleware_resets_context_on_exception() -> None:
 
 
 @pytest.mark.anyio
+async def test_middleware_adds_headers_key_when_missing() -> None:
+    """Middleware writes headers back when response.start has no headers key."""
+    from acme_api.middleware import RequestIdMiddleware
+
+    messages: list[dict[str, Any]] = []
+
+    async def _app(
+        _scope: dict[str, Any],
+        _receive: Callable[..., Any],
+        send: Callable[[dict[str, Any]], Any],
+    ) -> None:  # noqa: ANN401
+        await send({"type": "http.response.start", "status": 204})
+
+    async def _send(message: dict[str, Any]) -> None:
+        messages.append(message)
+
+    middleware = RequestIdMiddleware(app=_app)
+    await middleware({"type": "http", "path": "/ok"}, lambda: None, _send)
+
+    assert messages[0]["headers"][0][0] == b"x-request-id"
+
+
+@pytest.mark.anyio
 async def test_middleware_skips_non_http_scope() -> None:
     """Middleware passes through non-HTTP scopes without setting request ID."""
     from acme_api.middleware import RequestIdMiddleware
