@@ -93,6 +93,7 @@ datefmt = %H:%M:%S
 
         expected_tables = {
             "alembic_version",
+            "api_keys",
             "certificates",
             "events",
             "renewal_attempts",

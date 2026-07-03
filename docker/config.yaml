@@ -12,7 +12,7 @@ deployment:
   permissions_key: 384
 
 acme:
-  binary_path: /home/acmeapi/.local/bin/acme.sh
+  binary_path: /usr/local/bin/acme.sh
   home_dir: /acmesh
 
 renewal:
@@ -30,4 +30,3 @@ webhooks:
 api_keys: {}
 dns_providers: []
 acme_accounts: []
-
