@@ -3,7 +3,7 @@ services:
     image: ghcr.io/letsencrypt/pebble:latest
     command: -config test/config/pebble-config.json -strict -dnsserver 172.28.50.3:8053
     volumes:
-      - ./pebble-config.json:/test/config/pebble-config.json:ro
+      - ./tests/integration/pebble_harness/pebble-config.json:/test/config/pebble-config.json:ro
     networks:
       acmetest:
         ipv4_address: 172.28.50.2
@@ -17,15 +17,15 @@ services:
 
   acme-api-test:
     build:
-      context: ..
+      context: .
       dockerfile: Dockerfile
     image: "acme-api:test-pool"
     environment:
       ACME_API_CONFIG: /config/acme.api.test-config.yaml
     volumes:
-      - ./acme.api.test-config.yaml:/config/acme.api.test-config.yaml:ro
-      - acmetest-certificates:/certificates
-      - acmetest-acmesh-dns-proxy:/acmesh
+      - ./tests/integration/pebble_harness/acme.api.test-config.yaml:/config/acme.api.test-config.yaml:ro
+      - ./tests/fixtures/sample_dns.env:/fixtures/sample_dns.env:ro
+      - /tmp/acme-api-pebble-harness:/tmp/acme-api-pebble-harness
     networks:
       - acmetest
 
@@ -35,7 +35,3 @@ networks:
     ipam:
       config:
         - subnet: 172.28.50.0/24
-
-volumes:
-  acmetest-certificates:
-  acmetest-acmesh-dns-proxy:
