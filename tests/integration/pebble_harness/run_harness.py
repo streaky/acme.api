@@ -7,7 +7,6 @@ import sys
 import time
 from pathlib import Path
 
-
 REPO_ROOT = Path(__file__).resolve().parents[3]
 HARNESS_DIR = Path(__file__).resolve().parent
 COMPOSE_FILE = REPO_ROOT / "docker-compose.harness.yaml"
