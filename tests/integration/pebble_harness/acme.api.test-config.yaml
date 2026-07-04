@@ -1,0 +1,25 @@
+log:
+  level: INFO
+  format: json
+
+database:
+  url: sqlite+aiosqlite:///./data/acme.db
+
+deployment:
+  directory: /certificates
+
+acme:
+  binary_path: /usr/local/bin/acme.sh
+  home_dir: /acmesh
+
+renewal:
+  enabled: true
+  window_days: 1
+dns_providers:
+  - name: cloudflare-test
+    provider_name: cloudflare
+    env_vars_file_path: ../fixtures/sample_dns.env
+
+acme_accounts:
+  - name: pebble-local
+    server_url: http://pebble:14000/directory

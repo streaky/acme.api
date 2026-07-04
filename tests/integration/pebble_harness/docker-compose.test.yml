@@ -1,0 +1,41 @@
+services:
+  pebble:
+    image: ghcr.io/letsencrypt/pebble:latest
+    command: -config test/config/pebble-config.json -strict -dnsserver 172.28.50.3:8053
+    volumes:
+      - ./pebble-config.json:/test/config/pebble-config.json:ro
+    networks:
+      acmetest:
+        ipv4_address: 172.28.50.2
+
+  pebble-challtestsrv:
+    image: ghcr.io/letsencrypt/pebble-challtestsrv:latest
+    command: -defaultIPv6 "" -defaultIPv4 172.28.50.3
+    networks:
+      acmetest:
+        ipv4_address: 172.28.50.3
+
+  acme-api-test:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: "acme-api:test-pool"
+    environment:
+      ACME_API_CONFIG: /config/acme.api.test-config.yaml
+    volumes:
+      - ./acme.api.test-config.yaml:/config/acme.api.test-config.yaml:ro
+      - acmetest-certificates:/certificates
+      - acmetest-acmesh-dns-proxy:/acmesh
+    networks:
+      - acmetest
+
+networks:
+  acmetest:
+    name: acmetest
+    ipam:
+      config:
+        - subnet: 172.28.50.0/24
+
+volumes:
+  acmetest-certificates:
+  acmetest-acmesh-dns-proxy:
