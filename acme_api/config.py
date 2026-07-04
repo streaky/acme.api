@@ -87,7 +87,7 @@ class RenewalConfig(StrictConfigModel):
     """Automatic renewal scheduling configuration."""
 
     enabled: bool = True
-    check_interval_hours: int = Field(default=24, ge=1)
+    check_interval_hours: float = Field(default=24, gt=0)
     window_days: int = Field(default=30, ge=1)
     max_retries: int = Field(default=3, ge=0)
     shutdown_timeout_seconds: int = Field(default=30, ge=1)

@@ -3,14 +3,14 @@ log:
   format: json
 
 database:
-  url: sqlite+aiosqlite:///./data/acme.db
+  url: sqlite+aiosqlite:////tmp/acme-api-pebble-harness/data/acme.db
 
 deployment:
-  directory: /certificates
+  directory: /tmp/acme-api-pebble-harness/certificates
 
 acme:
   binary_path: /usr/local/bin/acme.sh
-  home_dir: /acmesh
+  home_dir: /tmp/acme-api-pebble-harness/acmesh
 
 renewal:
   enabled: true
@@ -18,7 +18,7 @@ renewal:
 dns_providers:
   - name: cloudflare-test
     provider_name: cloudflare
-    env_vars_file_path: ../fixtures/sample_dns.env
+    env_vars_file_path: /fixtures/sample_dns.env
 
 acme_accounts:
   - name: pebble-local
