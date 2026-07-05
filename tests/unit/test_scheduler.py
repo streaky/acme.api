@@ -14,7 +14,7 @@ from apscheduler.schedulers.asyncio import (  # type: ignore[import-untyped]
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from acme_api.backend.acmesh_backend import TerminalAcmeShError, TransientAcmeShError
+from acme_api.backend.acmesh_errors import TerminalAcmeShError, TransientAcmeShError
 from acme_api.backend.dataclasses import AccountInfo, CertExpiry, IssuanceResult
 from acme_api.backend.protocol import ChallengeMethod
 from acme_api.config import AppSettings, DatabaseConfig, DeploymentConfig, RenewalConfig
@@ -46,9 +46,10 @@ class RecordingBackend:
         method: ChallengeMethod,
         challenge_params: dict[str, Any],
         account_key_path: str | None = None,
+        server_url: str | None = None,
     ) -> IssuanceResult:
         """Return deterministic issuance info."""
-        del method, challenge_params
+        del method, challenge_params, server_url
         return IssuanceResult(
             account_key_path=account_key_path or "/acmesh/acct.key",
             cert=_cert_expiry(),

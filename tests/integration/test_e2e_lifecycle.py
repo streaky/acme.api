@@ -59,9 +59,11 @@ class ArtifactBackend:
         method: ChallengeMethod,
         challenge_params: dict[str, Any],
         account_key_path: str | None = None,
+        server_url: str | None = None,
     ) -> IssuanceResult:
         """Return deployable certificate artifacts for issuance."""
         assert method == "dns-01"
+        del server_url
         self.issue_calls += 1
         self.challenge_params.append(challenge_params)
         return self._result(domains, "issue", account_key_path)

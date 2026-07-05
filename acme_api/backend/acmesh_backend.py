@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses as _dc
-import datetime as _dt
 import logging
 import os
 import pathlib
@@ -13,6 +12,12 @@ import shlex
 import typing as t
 from functools import cached_property
 
+from acme_api.backend.acmesh_errors import (
+    AcmeShError,
+    TerminalAcmeShError,
+    TransientAcmeShError,
+)
+from acme_api.backend.acmesh_output import cert_expiry_from_output, parse_cert_expiry
 from acme_api.backend.dataclasses import AccountInfo, CertExpiry, IssuanceResult
 from acme_api.backend.protocol import AcmeBackend, ChallengeMethod
 
@@ -32,58 +37,6 @@ _BLOCKED_ENV_KEYS = {
     "BASH_ENV",
     "SHELL",
 }
-
-
-_PATH_PATTERNS = {
-    "cert": (
-        re.compile(r"Your cert is in\s+(?P<path>[^,\n]+)", re.IGNORECASE),
-        re.compile(r"CertPath=(?P<path>[^\n]+)", re.IGNORECASE),
-    ),
-    "key": (
-        re.compile(r"Your cert key is in\s+(?P<path>[^,\n]+)", re.IGNORECASE),
-        re.compile(r"KeyPath=(?P<path>[^\n]+)", re.IGNORECASE),
-    ),
-    "chain": (
-        re.compile(
-            r"(?:CA certificates|intermediate CA cert)\s+(?:are|is)\s+in\s+(?P<path>[^,\n]+)",
-            re.IGNORECASE,
-        ),
-        re.compile(r"CAPath=(?P<path>[^\n]+)", re.IGNORECASE),
-    ),
-    "fullchain": (
-        re.compile(r"full chain certs is there:\s+(?P<path>[^\n]+)", re.IGNORECASE),
-        re.compile(r"FullChainPath=(?P<path>[^\n]+)", re.IGNORECASE),
-    ),
-}
-_DATE_PATTERNS = (
-    re.compile(r"\*{3}\s*Expired at:\s*(?P<date>[^\n]+)", re.IGNORECASE),
-    re.compile(r"Le_NextRenewTimeStr=['\"]?(?P<date>[^'\"\n]+)", re.IGNORECASE),
-    re.compile(r"Not After\s*:\s*(?P<date>[^\n]+)", re.IGNORECASE),
-)
-
-
-class AcmeShError(Exception):
-    """Base exception for acme.sh errors.
-
-    Subclasses distinguish transient failures (DNS propagation, rate limits) from terminal
-    ones (account invalid, misconfiguration). The API layer maps these to HTTP statuses.
-    """
-
-
-class TerminalAcmeShError(AcmeShError):
-    """An error that will not resolve by retrying the same operation."""
-
-    def __init__(self, message: str, *, stderr: str = "") -> None:
-        super().__init__(message)
-        self.stderr = stderr
-
-
-class TransientAcmeShError(AcmeShError):
-    """An error that may resolve on retry (DNS propagation, transient CA outage)."""
-
-    def __init__(self, message: str, *, stderr: str = "") -> None:
-        super().__init__(message)
-        self.stderr = stderr
 
 
 @_dc.dataclass(frozen=True)
@@ -172,8 +125,10 @@ class AcmeShBackend(AcmeBackend):
     ) -> AccountInfo:
         args = [
             "--register",
-            f"--email={email}",
-            f"--server={server_url}",
+            "--email",
+            email,
+            "--server",
+            server_url,
             "--nocaptcha",
             "--accountkey-file",
             str(self._cfg.home_dir / "acct.key"),
@@ -197,6 +152,7 @@ class AcmeShBackend(AcmeBackend):
         method: ChallengeMethod,
         challenge_params: dict[str, t.Any],
         account_key_path: str | None = None,
+        server_url: str | None = None,
     ) -> IssuanceResult:
         if not domains:
             raise TerminalAcmeShError("At least one domain is required for issuance")
@@ -206,28 +162,34 @@ class AcmeShBackend(AcmeBackend):
 
         args = [
             "--issue",
-            f"--domain={primary_domain}",
+            "--domain",
+            primary_domain,
             *chain_args_for(domains),
         ]
+
+        if server_url is not None:
+            # Without an explicit server acme.sh falls back to its default CA,
+            # silently ignoring the account's configured directory URL.
+            args += ["--server", server_url]
 
         if method == "dns-01":
             dns_provider = str(challenge_params["dns_provider"])
             env_vars_file = challenge_params.get("env_vars_file")
-            args += [f"--dns={dns_provider}"]
+            args += ["--dns", dns_provider]
             if self._cfg.dnssleep_seconds is not None:
                 args += ["--dnssleep", str(self._cfg.dnssleep_seconds)]
             if env_vars_file is not None:
                 command_env.update(_load_env_vars(pathlib.Path(str(env_vars_file))))
         elif method == "webroot":
             webroot = str(challenge_params["webroot_dir"])
-            args += [f"--webroot={webroot}"]
+            args += ["--webroot", webroot]
 
         if account_key_path is not None:
-            args += [f"--accountkey-file={account_key_path}"]
+            args += ["--accountkey-file", account_key_path]
 
         _, stdout = await self._run(args, env=command_env)
 
-        cert_info = parse_cert_expiry(stdout)
+        cert_info = await cert_expiry_from_output(stdout)
         return IssuanceResult(
             account_key_path=account_key_path or str(self._cfg.home_dir / "acct.key"),
             cert=cert_info,
@@ -242,13 +204,13 @@ class AcmeShBackend(AcmeBackend):
         if not domains:
             raise TerminalAcmeShError("At least one domain is required for renewal")
 
-        args = ["--renew", f"--domain={domains[0]}", *chain_args_for(domains)]
+        args = ["--renew", "--domain", domains[0], *chain_args_for(domains)]
         if force_renewal or self._cfg.force_renewal:
             args.append("--force")
 
         _, stdout = await self._run(args)
 
-        cert_info = parse_cert_expiry(stdout)
+        cert_info = await cert_expiry_from_output(stdout)
         return IssuanceResult(
             account_key_path=str(self._cfg.home_dir / "acct.key"),
             cert=cert_info,
@@ -321,7 +283,10 @@ def chain_args_for(domains: list[str]) -> list[str]:
     """
     if len(domains) <= 1:
         return []
-    return [f"--domain={d}" for d in domains[1:]]
+    out: list[str] = []
+    for domain in domains[1:]:
+        out += ["--domain", domain]
+    return out
 
 
 def _load_env_vars(env_vars_file: pathlib.Path) -> dict[str, str]:
@@ -356,76 +321,3 @@ def _load_env_vars(env_vars_file: pathlib.Path) -> dict[str, str]:
                 continue
             result[key] = shlex.split(value.strip())[0] if value.strip() else ""
     return result
-
-
-def parse_cert_expiry(output: str) -> CertExpiry:
-    """Extract the expiry record from acme.sh output.
-
-    Raises :class:`TerminalAcmeShError` when no match is found — this means acme.sh failed
-    silently or returned unexpected content; the caller should inspect stderr.
-    """
-    cert_path = _extract_path(output, "cert")
-    privkey_path = _extract_path(output, "key")
-    chain_path = _extract_path(output, "chain")
-    fullchain_path = _extract_path(output, "fullchain")
-    expires_str = _extract_expiry_date(output)
-
-    if cert_path is None or privkey_path is None or chain_path is None or expires_str is None:
-        raise TerminalAcmeShError(
-            "Could not parse cert expiry from acme.sh output",
-            stderr=output,
-        )
-
-    if fullchain_path is None:
-        fullchain_path = str(pathlib.Path(cert_path).parent / "fullchain.pem")
-
-    expires_at = _parse_acmesh_datetime(expires_str)
-
-    return CertExpiry(
-        cert_path=cert_path,
-        privkey_path=privkey_path,
-        chain_path=chain_path,
-        fullchain_path=fullchain_path,
-        expires_at=expires_at,
-    )
-
-
-def _extract_path(output: str, key: str) -> str | None:
-    """Extract and normalize a path field from acme.sh output."""
-    for pattern in _PATH_PATTERNS[key]:
-        match = pattern.search(output)
-        if match:
-            return match.group("path").strip().strip("'\"")
-    return None
-
-
-def _extract_expiry_date(output: str) -> str | None:
-    """Extract an expiry or next-renewal date from acme.sh output."""
-    for pattern in _DATE_PATTERNS:
-        match = pattern.search(output)
-        if match:
-            return match.group("date").strip()
-    return None
-
-
-def _parse_acmesh_datetime(s: str) -> _dt.datetime:
-    """Parse acme.sh's ``YYYY-MM-DD HH:MM:SS+ZZZZ`` format.
-
-    acme.sh always emits UTC offsets; we normalize to a timezone-aware datetime.
-    """
-    # Try ISO-like with offset first, then fall back to plain format.
-    try:
-        return _dt.datetime.fromisoformat(s.replace(" UTC", "+00:00").replace(" ", "T"))
-    except ValueError:
-        pass
-
-    for fmt in ("%Y-%m-%d %H:%M:%S%z", "%b %d %H:%M:%S %Y %Z"):
-        try:
-            parsed = _dt.datetime.strptime(s, fmt)
-            if parsed.tzinfo is None:
-                return parsed.replace(tzinfo=_dt.timezone.utc)
-            return parsed
-        except ValueError:
-            continue
-
-    raise TerminalAcmeShError(f"Could not parse acme.sh datetime: {s}")

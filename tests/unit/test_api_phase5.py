@@ -37,8 +37,9 @@ class _ArtifactBackend:
         method: str,
         challenge_params: dict[str, object],
         account_key_path: str | None = None,
+        server_url: str | None = None,
     ) -> IssuanceResult:
-        del method, challenge_params
+        del method, challenge_params, server_url
         self.issue_calls += 1
         return self._result(domains, "issue", account_key_path)
 

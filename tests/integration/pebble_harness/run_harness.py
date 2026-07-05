@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -17,11 +18,12 @@ PEBBLE_DIRECTORY_URL = "https://pebble:14000/dir"
 PEBBLE_POLL_SERVICE = "acme-api-test"
 CONTAINER_PYTHON = "python"
 TEST_CONFIG = HARNESS_DIR / "acme.api.test-config.yaml"
-TEST_TARGET = "tests/integration/test_e2e_lifecycle.py::test_full_certificate_lifecycle_with_webhooks"
+TEST_TARGET = "tests/integration/pebble_harness/test_pebble_e2e.py"
 RUNTIME_DIR = Path(
     os.environ.get("HARNESS_RUNTIME_DIR", f"/tmp/acme-api-pebble-harness-{os.getuid()}")
 )
 RUNTIME_SUBDIRS = ("data", "certificates", "acmesh")
+API_PORT = os.environ.get("HARNESS_API_PORT", "8080")
 
 MAX_POLL_ATTEMPTS = 8
 POLL_INTERVAL_SEC = 3.0
@@ -48,17 +50,25 @@ def _compose_command(*args: str) -> list[str]:
 def _run_command(command: list[str], *, check: bool = True) -> subprocess.CompletedProcess[str]:
     """Run a command from the repository root."""
     os.environ["HARNESS_RUNTIME_DIR"] = str(RUNTIME_DIR)
+    os.environ["HARNESS_API_PORT"] = API_PORT
     return subprocess.run(command, check=check, cwd=REPO_ROOT, text=True)
 
 
 def _prepare_runtime_dir() -> None:
-    """Create writable host directories for the harness bind mount."""
+    """Create writable, *empty* host directories for the harness bind mount.
+
+    Pebble mints a fresh root CA and account database on every boot, so acme.sh account
+    state, issued certs, and the API database from a previous run are invalid by
+    construction — stale state makes issuance fail instantly. Wipe the subdirs each run.
+    """
     RUNTIME_DIR.mkdir(parents=True, exist_ok=True, mode=0o755)
     if not os.access(RUNTIME_DIR, os.W_OK):
         raise PermissionError(f"harness runtime directory is not writable: {RUNTIME_DIR}")
     for subdir in RUNTIME_SUBDIRS:
         directory = RUNTIME_DIR / subdir
-        directory.mkdir(exist_ok=True, mode=0o755)
+        if directory.exists():
+            shutil.rmtree(directory)
+        directory.mkdir(mode=0o755)
         if not os.access(directory, os.W_OK):
             raise PermissionError(f"harness runtime directory is not writable: {directory}")
 
@@ -126,6 +136,12 @@ def _teardown() -> None:
 def _run_pytest() -> int:
     """Run the harness pytest target and return its exit code."""
     command = [sys.executable, "-m", "pytest", TEST_TARGET]
+    env = {
+        **os.environ,
+        "PEBBLE_HARNESS": "1",
+        "HARNESS_RUNTIME_DIR": str(RUNTIME_DIR),
+        "HARNESS_API_PORT": API_PORT,
+    }
     print(f"Running e2e ACME harness test; config={TEST_CONFIG} root={HARNESS_DIR}")
     try:
         result = subprocess.run(
@@ -134,6 +150,7 @@ def _run_pytest() -> int:
             cwd=REPO_ROOT,
             text=True,
             timeout=MAX_TEST_TIMEOUT_SEC,
+            env=env,
         )
     except subprocess.TimeoutExpired as exc:
         print(f"Test phase timed out after {exc.timeout}s.")

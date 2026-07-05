@@ -10,12 +10,11 @@ import pytest
 
 from acme_api.backend.acmesh_backend import (
     AcmeShBackend,
-    TerminalAcmeShError,
-    TransientAcmeShError,
     _AcmeShBackendConfig,
     _load_env_vars,
-    parse_cert_expiry,
 )
+from acme_api.backend.acmesh_errors import TerminalAcmeShError, TransientAcmeShError
+from acme_api.backend.acmesh_output import parse_cert_expiry
 from acme_api.backend.mock_backend import MockAcmeBackend
 
 SUCCESS_OUTPUT = (
@@ -60,6 +59,18 @@ def failed_process(stderr: str, returncode: int = 1) -> AsyncMock:
     return mock_proc
 
 
+def has_flag_pair(call_args: tuple[str, ...], flag: str, value: str) -> bool:
+    """Return whether ``flag`` is immediately followed by ``value``.
+
+    acme.sh's argument parser only understands space-separated flag/value
+    pairs, so command construction must emit them as adjacent argv tokens.
+    """
+    return any(
+        call_args[index] == flag and call_args[index + 1] == value
+        for index in range(len(call_args) - 1)
+    )
+
+
 class TestRegisterAccountCommand:
     """Verify the register command is constructed correctly."""
 
@@ -82,8 +93,10 @@ class TestRegisterAccountCommand:
         assert "--home" in call_args
         assert str(tmp_path / "acmesh") in call_args
         assert "--register" in call_args
-        assert "--email=admin@example.com" in call_args
-        assert "--server=https://acme-staging-v02.api.letsencrypt.org/directory" in call_args
+        assert has_flag_pair(call_args, "--email", "admin@example.com")
+        assert has_flag_pair(
+            call_args, "--server", "https://acme-staging-v02.api.letsencrypt.org/directory"
+        )
         assert "--nocaptcha" in call_args
         assert "--accountkey-file" in call_args
         assert str(acct_key) in call_args
@@ -110,9 +123,9 @@ class TestIssueCertificateDns01:
 
         call_args = mock_run.call_args.args
         assert "--issue" in call_args
-        assert "--domain=example.com" in call_args
-        assert "--domain=www.example.com" in call_args
-        assert "--dns=cloudflare" in call_args
+        assert has_flag_pair(call_args, "--domain", "example.com")
+        assert has_flag_pair(call_args, "--domain", "www.example.com")
+        assert has_flag_pair(call_args, "--dns", "cloudflare")
         assert "--dnssleep" in call_args
         assert "30" in call_args
         assert result.domains == ["example.com", "www.example.com"]
@@ -159,9 +172,9 @@ class TestIssueCertificateWebroot:
 
         call_args = mock_run.call_args.args
         assert "--issue" in call_args
-        assert "--domain=example.com" in call_args
-        assert "--webroot=/var/www/certbot" in call_args
-        assert "--dns=" not in " ".join(call_args)
+        assert has_flag_pair(call_args, "--domain", "example.com")
+        assert has_flag_pair(call_args, "--webroot", "/var/www/certbot")
+        assert "--dns" not in call_args
 
 
 class TestRenewCertificate:
@@ -179,8 +192,8 @@ class TestRenewCertificate:
 
         call_args = mock_run.call_args.args
         assert "--renew" in call_args
-        assert "--domain=example.com" in call_args
-        assert "--domain=www.example.com" in call_args
+        assert has_flag_pair(call_args, "--domain", "example.com")
+        assert has_flag_pair(call_args, "--domain", "www.example.com")
         assert "--force" in call_args
         assert result.domains == ["example.com", "www.example.com"]
 

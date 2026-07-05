@@ -74,8 +74,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
             binary_path=Path(settings.acme.binary_path),
             home_dir=settings.acme.home_dir,
             log_file=None,
-            force_renewal=False,
-            dnssleep_seconds=None,
+            force_renewal=settings.acme.force_renewal,
+            dnssleep_seconds=settings.acme.dnssleep_seconds,
         )
     )
     app.state.acme_backend = backend
