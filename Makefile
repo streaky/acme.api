@@ -1,4 +1,4 @@
-.PHONY: venv pip-cache-dir deps dev start build stop logs test typecheck lint flake8 format isort isort-fix check-max-lines check-forbidden-imports combined-check install-act simulate-ci deps-update
+.PHONY: venv pip-cache-dir deps dev start build stop logs test typecheck lint flake8 format isort isort-fix check-max-lines check-forbidden-imports combined-check install-act simulate-ci deps-update test-harness
 .ONESHELL:
 
 export ROOT_PATH=$(abspath $(dir $(lastword $(MAKEFILE_LIST))))
@@ -99,3 +99,6 @@ install-act:
 
 simulate-ci: install-act
 	./act -P ubuntu-latest=$(ACT_IMAGE)
+
+test-harness: dev
+	.venv/bin/python3 tests/integration/pebble_harness/run_harness.py

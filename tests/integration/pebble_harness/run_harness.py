@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import time
@@ -12,12 +13,14 @@ HARNESS_DIR = Path(__file__).resolve().parent
 COMPOSE_FILE = REPO_ROOT / "docker-compose.harness.yaml"
 ENV_FILE = HARNESS_DIR / ".env.test"
 PROJECT_NAME = "acme_api_pebble_harness"
-PEBBLE_DIRECTORY_URL = "http://pebble:14000/directory"
+PEBBLE_DIRECTORY_URL = "https://pebble:14000/dir"
 PEBBLE_POLL_SERVICE = "acme-api-test"
 CONTAINER_PYTHON = "python"
 TEST_CONFIG = HARNESS_DIR / "acme.api.test-config.yaml"
 TEST_TARGET = "tests/integration/test_e2e_lifecycle.py::test_full_certificate_lifecycle_with_webhooks"
-RUNTIME_DIR = Path("/tmp/acme-api-pebble-harness")
+RUNTIME_DIR = Path(
+    os.environ.get("HARNESS_RUNTIME_DIR", f"/tmp/acme-api-pebble-harness-{os.getuid()}")
+)
 RUNTIME_SUBDIRS = ("data", "certificates", "acmesh")
 
 MAX_POLL_ATTEMPTS = 8
@@ -44,17 +47,20 @@ def _compose_command(*args: str) -> list[str]:
 
 def _run_command(command: list[str], *, check: bool = True) -> subprocess.CompletedProcess[str]:
     """Run a command from the repository root."""
+    os.environ["HARNESS_RUNTIME_DIR"] = str(RUNTIME_DIR)
     return subprocess.run(command, check=check, cwd=REPO_ROOT, text=True)
 
 
 def _prepare_runtime_dir() -> None:
     """Create writable host directories for the harness bind mount."""
-    RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
-    RUNTIME_DIR.chmod(0o777)
+    RUNTIME_DIR.mkdir(parents=True, exist_ok=True, mode=0o755)
+    if not os.access(RUNTIME_DIR, os.W_OK):
+        raise PermissionError(f"harness runtime directory is not writable: {RUNTIME_DIR}")
     for subdir in RUNTIME_SUBDIRS:
         directory = RUNTIME_DIR / subdir
-        directory.mkdir(exist_ok=True)
-        directory.chmod(0o777)
+        directory.mkdir(exist_ok=True, mode=0o755)
+        if not os.access(directory, os.W_OK):
+            raise PermissionError(f"harness runtime directory is not writable: {directory}")
 
 
 def _compose_up() -> None:
@@ -71,8 +77,12 @@ def _compose_up() -> None:
 def _poll_pebble_from_compose_network() -> bool:
     """Return whether Pebble is reachable from the API container network."""
     script = (
+        "import ssl; "
         "from urllib.request import urlopen; "
-        f"urlopen({PEBBLE_DIRECTORY_URL!r}, timeout=5).close()"
+        "context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT); "
+        "context.check_hostname = False; "
+        "context.verify_mode = ssl.CERT_NONE; "
+        f"urlopen({PEBBLE_DIRECTORY_URL!r}, timeout=5, context=context).close()"
     )
     command = _compose_command(
         "exec",

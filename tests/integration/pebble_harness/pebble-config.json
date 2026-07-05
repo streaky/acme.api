@@ -17,7 +17,7 @@
     "profiles": {
       "default": {
         "description": "Standard profile for test renewals (~minutes)",
-        "validityPeriod": "30m"
+        "validityPeriod": 1800
       },
       "shortlived": {
         "description": "Ultra-short cert for renewal smoke-testing",

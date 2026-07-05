@@ -22,4 +22,4 @@ dns_providers:
 
 acme_accounts:
   - name: pebble-local
-    server_url: http://pebble:14000/directory
+    server_url: https://pebble:14000/dir

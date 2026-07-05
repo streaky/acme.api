@@ -1,19 +1,13 @@
 services:
   pebble:
     image: ghcr.io/letsencrypt/pebble:latest
-    command: -config test/config/pebble-config.json -strict -dnsserver 172.28.50.3:8053
+    command: -config test/config/pebble-config.json -strict -dnsserver pebble-challtestsrv:8053
     volumes:
       - ./tests/integration/pebble_harness/pebble-config.json:/test/config/pebble-config.json:ro
-    networks:
-      acmetest:
-        ipv4_address: 172.28.50.2
 
   pebble-challtestsrv:
     image: ghcr.io/letsencrypt/pebble-challtestsrv:latest
-    command: -defaultIPv6 "" -defaultIPv4 172.28.50.3
-    networks:
-      acmetest:
-        ipv4_address: 172.28.50.3
+    command: -defaultIPv6 "" -defaultIPv4 ""
 
   acme-api-test:
     build:
@@ -25,13 +19,4 @@ services:
     volumes:
       - ./tests/integration/pebble_harness/acme.api.test-config.yaml:/config/acme.api.test-config.yaml:ro
       - ./tests/fixtures/sample_dns.env:/fixtures/sample_dns.env:ro
-      - /tmp/acme-api-pebble-harness:/tmp/acme-api-pebble-harness
-    networks:
-      - acmetest
-
-networks:
-  acmetest:
-    name: acmetest
-    ipam:
-      config:
-        - subnet: 172.28.50.0/24
+      - ${HARNESS_RUNTIME_DIR:-/tmp/acme-api-pebble-harness}:/tmp/acme-api-pebble-harness
