@@ -54,7 +54,7 @@ stop:
 logs:
 	docker compose logs -f --tail=150
 
-test: dev
+test: dev test-harness
 	set -e
 	.venv/bin/python3 scripts/check_forbidden_imports.py ${PY_PATHS}
 	.venv/bin/pytest -vvv --tb=short --color=yes ${PYTEST_COV} --cov-report=xml:coverage-data/coverage.xml --cov-report=html:coverage-data/htmlcov --cov-report=term --cov-report=json:coverage-data/coverage.json ${TEST}
@@ -100,5 +100,5 @@ install-act:
 simulate-ci: install-act
 	./act -P ubuntu-latest=$(ACT_IMAGE)
 
-test-harness: dev
+test-harness:
 	.venv/bin/python3 tests/integration/pebble_harness/run_harness.py
