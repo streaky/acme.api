@@ -54,7 +54,7 @@ stop:
 logs:
 	docker compose logs -f --tail=150
 
-test: dev test-harness
+test: dev
 	set -e
 	.venv/bin/python3 scripts/check_forbidden_imports.py ${PY_PATHS}
 	.venv/bin/pytest -vvv --tb=short --color=yes ${PYTEST_COV} --cov-report=xml:coverage-data/coverage.xml --cov-report=html:coverage-data/htmlcov --cov-report=term --cov-report=json:coverage-data/coverage.json $(if ${TEST},${TEST},--ignore=tests/integration/pebble_harness/test_pebble_e2e.py)

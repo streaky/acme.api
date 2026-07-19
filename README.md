@@ -45,6 +45,7 @@ Useful targets:
 | Command | Description |
 |---|---|
 | `make test` | Run pytest with coverage and the per-file coverage gate |
+| `make test-harness` | Run the optional Docker-backed Pebble DNS-01 end-to-end test |
 | `make typecheck` | Run strict mypy |
 | `make lint` | Run flake8 and pylint |
 | `make isort` | Check import ordering |
@@ -58,6 +59,8 @@ Useful targets:
 | `make logs` | Follow container logs |
 
 `make simulate-ci` requires `act` settings in the shell or `.env`: `ACT_VERSION`, `ACT_PLATFORM`, and `ACT_IMAGE`.
+
+`make test-harness` is intentionally separate from `make test` and `make combined-check`: it needs Docker daemon access, while the standard release gate is designed to run in both GitHub Actions and `act`. GitHub Actions can run it explicitly from **Run workflow** by enabling **Run the Docker-backed Pebble DNS-01 integration harness**.
 
 ## Configuration
 

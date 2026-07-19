@@ -7,6 +7,12 @@ on:
       - master
   pull_request:
   workflow_dispatch:
+    inputs:
+      run_pebble_harness:
+        description: Run the Docker-backed Pebble DNS-01 integration harness
+        required: false
+        default: false
+        type: boolean
 
 jobs:
   quality:
@@ -32,3 +38,7 @@ jobs:
 
       - name: Run local release gates
         run: make combined-check
+
+      - name: Run Pebble integration harness
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_pebble_harness }}
+        run: make test-harness
