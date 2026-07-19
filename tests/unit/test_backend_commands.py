@@ -10,11 +10,14 @@ import pytest
 
 from acme_api.backend.acmesh_backend import (
     AcmeShBackend,
-    TerminalAcmeShError,
-    TransientAcmeShError,
     _AcmeShBackendConfig,
     _load_env_vars,
+)
+from acme_api.backend.acmesh_errors import TerminalAcmeShError, TransientAcmeShError
+from acme_api.backend.acmesh_output import (
+    cert_expiry_from_output,
     parse_cert_expiry,
+    read_cert_notafter,
 )
 from acme_api.backend.mock_backend import MockAcmeBackend
 
@@ -60,6 +63,18 @@ def failed_process(stderr: str, returncode: int = 1) -> AsyncMock:
     return mock_proc
 
 
+def has_flag_pair(call_args: tuple[str, ...], flag: str, value: str) -> bool:
+    """Return whether ``flag`` is immediately followed by ``value``.
+
+    acme.sh's argument parser only understands space-separated flag/value
+    pairs, so command construction must emit them as adjacent argv tokens.
+    """
+    return any(
+        call_args[index] == flag and call_args[index + 1] == value
+        for index in range(len(call_args) - 1)
+    )
+
+
 class TestRegisterAccountCommand:
     """Verify the register command is constructed correctly."""
 
@@ -82,8 +97,10 @@ class TestRegisterAccountCommand:
         assert "--home" in call_args
         assert str(tmp_path / "acmesh") in call_args
         assert "--register" in call_args
-        assert "--email=admin@example.com" in call_args
-        assert "--server=https://acme-staging-v02.api.letsencrypt.org/directory" in call_args
+        assert has_flag_pair(call_args, "--email", "admin@example.com")
+        assert has_flag_pair(
+            call_args, "--server", "https://acme-staging-v02.api.letsencrypt.org/directory"
+        )
         assert "--nocaptcha" in call_args
         assert "--accountkey-file" in call_args
         assert str(acct_key) in call_args
@@ -110,9 +127,9 @@ class TestIssueCertificateDns01:
 
         call_args = mock_run.call_args.args
         assert "--issue" in call_args
-        assert "--domain=example.com" in call_args
-        assert "--domain=www.example.com" in call_args
-        assert "--dns=cloudflare" in call_args
+        assert has_flag_pair(call_args, "--domain", "example.com")
+        assert has_flag_pair(call_args, "--domain", "www.example.com")
+        assert has_flag_pair(call_args, "--dns", "cloudflare")
         assert "--dnssleep" in call_args
         assert "30" in call_args
         assert result.domains == ["example.com", "www.example.com"]
@@ -159,9 +176,9 @@ class TestIssueCertificateWebroot:
 
         call_args = mock_run.call_args.args
         assert "--issue" in call_args
-        assert "--domain=example.com" in call_args
-        assert "--webroot=/var/www/certbot" in call_args
-        assert "--dns=" not in " ".join(call_args)
+        assert has_flag_pair(call_args, "--domain", "example.com")
+        assert has_flag_pair(call_args, "--webroot", "/var/www/certbot")
+        assert "--dns" not in call_args
 
 
 class TestRenewCertificate:
@@ -179,8 +196,8 @@ class TestRenewCertificate:
 
         call_args = mock_run.call_args.args
         assert "--renew" in call_args
-        assert "--domain=example.com" in call_args
-        assert "--domain=www.example.com" in call_args
+        assert has_flag_pair(call_args, "--domain", "example.com")
+        assert has_flag_pair(call_args, "--domain", "www.example.com")
         assert "--force" in call_args
         assert result.domains == ["example.com", "www.example.com"]
 
@@ -216,6 +233,67 @@ class TestParsing:
     def test_parse_failure_is_terminal(self) -> None:
         with pytest.raises(TerminalAcmeShError):
             parse_cert_expiry("unexpected output")
+
+    def test_parse_expiry_rejects_output_without_date(self) -> None:
+        output = (
+            "Your cert is in /acmesh/cert.pem\n"
+            "Your cert key is in /acmesh/privkey.pem\n"
+            "The intermediate CA cert is in /acmesh/chain.pem\n"
+        )
+
+        with pytest.raises(TerminalAcmeShError, match="Could not parse cert expiry"):
+            parse_cert_expiry(output)
+
+    @pytest.mark.anyio
+    async def test_cert_expiry_from_issue_output_reads_certificate_notafter(self) -> None:
+        output = (
+            "Your cert is in /acmesh/cert.pem\n"
+            "Your cert key is in /acmesh/privkey.pem\n"
+            "The intermediate CA cert is in /acmesh/chain.pem\n"
+        )
+        expires_at = parse_cert_expiry(SUCCESS_OUTPUT).expires_at
+
+        with patch(
+            "acme_api.backend.acmesh_output.read_cert_notafter",
+            new_callable=AsyncMock,
+            return_value=expires_at,
+        ) as mock_read_notafter:
+            result = await cert_expiry_from_output(output)
+
+        mock_read_notafter.assert_awaited_once_with("/acmesh/cert.pem")
+        assert result.fullchain_path == "/acmesh/fullchain.pem"
+        assert result.expires_at == expires_at
+
+    @pytest.mark.anyio
+    async def test_read_cert_notafter_parses_openssl_output(self) -> None:
+        mock_proc = successful_process("notAfter=Jul  5 02:29:00 2027 GMT\n")
+        with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_run:
+            mock_run.return_value = mock_proc
+
+            expires_at = await read_cert_notafter("/acmesh/cert.pem")
+
+        assert expires_at.isoformat() == "2027-07-05T02:29:00+00:00"
+        assert mock_run.call_args.args == (
+            "openssl",
+            "x509",
+            "-noout",
+            "-enddate",
+            "-in",
+            "/acmesh/cert.pem",
+        )
+
+    @pytest.mark.anyio
+    async def test_read_cert_notafter_rejects_bad_openssl_results(self) -> None:
+        for proc in (failed_process("bad certificate"), successful_process("notAfter")):
+            with patch(
+                "asyncio.create_subprocess_exec", new_callable=AsyncMock, return_value=proc
+            ):
+                with pytest.raises(TerminalAcmeShError):
+                    await read_cert_notafter("/acmesh/cert.pem")
+
+    def test_parse_expiry_rejects_invalid_date(self) -> None:
+        with pytest.raises(TerminalAcmeShError, match="Could not parse acme.sh datetime"):
+            parse_cert_expiry(SUCCESS_OUTPUT.replace("2026-12-31 23:59:59+0000", "invalid"))
 
     def test_load_env_vars_handles_exports_and_quotes(self, tmp_path: pathlib.Path) -> None:
         env_file = tmp_path / "dns.env"

@@ -11,11 +11,8 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from acme_api.backend.acmesh_backend import (
-    AcmeShBackend,
-    AcmeShError,
-    TransientAcmeShError,
-)
+from acme_api.backend.acmesh_backend import AcmeShBackend
+from acme_api.backend.acmesh_errors import AcmeShError, TransientAcmeShError
 from acme_api.backend.protocol import AcmeBackend
 from acme_api.config import AcmeAccountConfig, AppSettings, DnsProviderConfig
 from acme_api.deployer import DeploymentError, DeploymentOptions, deploy_issuance_result
@@ -126,6 +123,7 @@ class CertificateLifecycleService:
                         "env_vars_file": str(provider.env_vars_file_path),
                     },
                     account_key_path=_account_key_path(account),
+                    server_url=account.server_url,
                 )
                 deployed = deploy_issuance_result(
                     result,

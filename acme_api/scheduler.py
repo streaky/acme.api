@@ -16,7 +16,7 @@ from apscheduler.triggers.date import DateTrigger  # type: ignore[import-untyped
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from acme_api.backend.acmesh_backend import AcmeShError, TransientAcmeShError
+from acme_api.backend.acmesh_errors import AcmeShError, TransientAcmeShError
 from acme_api.backend.dataclasses import IssuanceResult
 from acme_api.backend.protocol import AcmeBackend
 from acme_api.config import RenewalConfig

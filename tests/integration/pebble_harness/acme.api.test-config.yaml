@@ -1,0 +1,33 @@
+log:
+  level: INFO
+  format: json
+
+database:
+  url: sqlite+aiosqlite:////tmp/acme-api-pebble-harness/data/acme.db
+
+deployment:
+  directory: /tmp/acme-api-pebble-harness/certificates
+
+acme:
+  binary_path: /usr/local/bin/acme.sh
+  home_dir: /tmp/acme-api-pebble-harness/acmesh
+  # Skip acme.sh's public-DNS propagation check; challtestsrv answers only
+  # inside the compose network, so public resolvers would never converge.
+  dnssleep_seconds: 2
+
+renewal:
+  # Keep the lifecycle deterministic for the harness: issuance is driven by
+  # the API call under test, never by the background scheduler.
+  enabled: false
+
+dns_providers:
+  - name: challtestsrv
+    provider_name: dns_challtestsrv
+    env_vars_file_path: /fixtures/challtestsrv.env
+
+acme_accounts:
+  - name: pebble-local
+    server_url: https://pebble:14000/dir
+
+api_keys:
+  admin: pebble-harness-admin-key

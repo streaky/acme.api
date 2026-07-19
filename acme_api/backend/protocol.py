@@ -30,6 +30,7 @@ class AcmeBackend(t.Protocol):
         method: ChallengeMethod,
         challenge_params: dict[str, t.Any],
         account_key_path: str | None = None,
+        server_url: str | None = None,
     ) -> IssuanceResult: ...
 
     async def renew_certificate(

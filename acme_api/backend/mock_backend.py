@@ -26,9 +26,10 @@ class MockAcmeBackend:
         method: ChallengeMethod,
         challenge_params: dict[str, object],
         account_key_path: str | None = None,
+        server_url: str | None = None,
     ) -> IssuanceResult:
         """Return a predictable issuance result."""
-        del method, challenge_params
+        del method, challenge_params, server_url
         return IssuanceResult(
             account_key_path=account_key_path or str(self.base_dir / "acct.key"),
             cert=self._cert_expiry(domains[0]),

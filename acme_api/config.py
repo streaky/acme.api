@@ -81,13 +81,29 @@ class AcmeConfig(StrictConfigModel):
 
     binary_path: str = "/usr/local/bin/acme.sh"
     home_dir: Path = Path("/acmesh")
+    dnssleep_seconds: int | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "Skip acme.sh's public-DNS TXT propagation check and sleep this many "
+            "seconds instead. Required when the ACME server validates against a "
+            "private DNS server (e.g. Pebble + challtestsrv)."
+        ),
+    )
+    force_renewal: bool = Field(
+        default=False,
+        description=(
+            "Always pass --force to acme.sh on renewal, re-issuing even when "
+            "acme.sh considers the certificate not yet due."
+        ),
+    )
 
 
 class RenewalConfig(StrictConfigModel):
     """Automatic renewal scheduling configuration."""
 
     enabled: bool = True
-    check_interval_hours: int = Field(default=24, ge=1)
+    check_interval_hours: float = Field(default=24, gt=0)
     window_days: int = Field(default=30, ge=1)
     max_retries: int = Field(default=3, ge=0)
     shutdown_timeout_seconds: int = Field(default=30, ge=1)

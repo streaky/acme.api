@@ -28,6 +28,7 @@ Makefile           # all build/lint/test commands
 - Write maintainable, modular, testable, and well-documented code.
 - Add docstrings for all public functions and classes.
 - Configuration is stored in `config.yaml`.
+- Do not use noqa or disable linter warnings any other way without a strong justification. Opt towards refactoring instead of silencing warnings, and if you must silence a warning, add a brief comment explaining why.
 
 ## Project Commands
 
