@@ -6,7 +6,7 @@ Lightweight, self-hosted REST service for managing ACME certificates through a m
 
 This project is entirely experimental currently. Do not use it for production, important certificates, or anything you are not prepared to delete and rebuild.
 
-`acme.api` is meant to be consumed only by applications that enforce strict access controls as part of the application stack — it is never intended for direct exposure on the internet or general internal systems. A system like this has severe security implications if misconfigured or misused, and the author is not responsible for any damage caused by its use. I considered a tool like this to be necessary for some specific systems, tightly controlled, and I'd have had to essentially build it regardless.
+`acme.api` is meant to be consumed only by applications that enforce strict access controls as part of the application stack — it is never intended for direct exposure on the internet or general internal systems. A system like this has severe security implications if misconfigured or misused, and the author is not responsible for any damage caused by its use. I considered a tool like this to be necessary for some specific systems I was working on, and I'd have had to essentially build it regardless as part of that other system, so I thought why not genericize it and share it.
 
 ## Status
 
