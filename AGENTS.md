@@ -40,8 +40,7 @@ Makefile           # all build/lint/test commands
 | `make test` | Run split unit, integration, and ordinary end-to-end suites plus coverage gates. |
 | `make test-unit` | Run deterministic unit tests. |
 | `make test-integration` | Run mock-backed integration tests. |
-| `make test-e2e` | Run the ordinary end-to-end boundary. |
-| `make test-harness` | Run the optional Docker-backed Pebble DNS-01 test. |
+| `make test-e2e` | Run the Pebble-backed Docker Compose end-to-end test stack. |
 | `make type-check` | Run strict mypy. |
 | `make format-check` | Check Ruff formatting. |
 | `make lint` | Run Ruff and Pylint. |

@@ -47,8 +47,7 @@ Useful targets:
 | `make test` | Run the unit, integration, and ordinary end-to-end suites plus coverage gates |
 | `make test-unit` | Run deterministic unit tests |
 | `make test-integration` | Run mock-backed integration tests |
-| `make test-e2e` | Run the ordinary end-to-end test boundary |
-| `make test-harness` | Run the optional Docker-backed Pebble DNS-01 end-to-end test |
+| `make test-e2e` | Run the Pebble-backed Docker Compose end-to-end test stack |
 | `make deps-check` | Verify `uv.lock` and both hashed requirements exports |
 | `make deps-update` | Upgrade dependencies and regenerate `uv.lock` and exports |
 | `make format-check` | Check Ruff formatting |
@@ -63,7 +62,6 @@ Useful targets:
 
 Development uses `uv` for locking and export verification. `make dev` follows Vulpine's hashed-install workflow: it bootstraps `.venv` and installs `requirements-dev.txt` with `--require-hashes --no-deps`.
 
-`make test-harness` is intentionally separate from `make test` and `make verify`: it needs Docker daemon access, while the standard release gate is deterministic. GitHub Actions can run it explicitly from **Run workflow** by enabling **Run the Docker-backed Pebble DNS-01 integration harness**.
 
 ## Configuration
 

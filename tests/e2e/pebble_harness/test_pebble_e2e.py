@@ -1,12 +1,9 @@
-"""Live end-to-end test against the Pebble-backed docker compose harness.
+"""Live end-to-end test against the Compose-native Pebble test stack.
 
 Exercises the real DNS Persist workflow over HTTP: create a certificate via
 the API, let the real ``acme.sh`` backend complete a DNS-01 order against
 Pebble (TXT records published to challtestsrv), then verify the certificate
 reaches ``valid`` and its artifacts are atomically deployed on disk.
-
-This module only runs when ``run_harness.py`` has brought the compose stack
-up and set ``PEBBLE_HARNESS=1``; under normal test gates it is skipped.
 """
 
 from __future__ import annotations
@@ -20,16 +17,10 @@ from typing import Any
 import httpx2
 import pytest
 
-pytestmark = pytest.mark.skipif(
-    os.environ.get("PEBBLE_HARNESS") != "1",
-    reason="Requires the Pebble docker compose harness (run via make test-harness).",
-)
-
 #: Must match ``api_keys.admin`` in acme.api.test-config.yaml.
 API_KEY = "pebble-harness-admin-key"
-API_PORT = int(os.environ.get("HARNESS_API_PORT", "11980"))
-BASE_URL = f"http://127.0.0.1:{API_PORT}"
-RUNTIME_DIR = Path(os.environ.get("HARNESS_RUNTIME_DIR", "/tmp/acme-api-pebble-harness"))
+BASE_URL = os.environ.get("PEBBLE_API_URL", "http://acme-api-test:8080")
+RUNTIME_DIR = Path(os.environ.get("PEBBLE_RUNTIME_DIR", "/tmp/acme-api-pebble-harness"))
 
 #: Resolved by challtestsrv inside the compose network; never leaves it.
 TEST_DOMAIN = "harness-e2e.example.test"
@@ -98,6 +89,10 @@ def test_dns_persist_workflow_issues_and_deploys_certificate() -> None:
         assert created["domains"] == [TEST_DOMAIN]
 
         final = _poll_until_terminal(client, created["id"])
+        if final["status"] != "valid":
+            events = client.get("/v1/events", params={"certificate_id": created["id"]})
+            assert events.status_code == 200, events.text
+            raise AssertionError(f"issuance failed: {final}; events: {events.json()}")
 
     assert final["status"] == "valid", f"issuance failed: {final}"
     assert final["expiry_date"] is not None

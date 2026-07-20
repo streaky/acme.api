@@ -267,9 +267,10 @@ class AcmeShBackend(AcmeBackend):
                 stderr=stderr,
             )
 
+        diagnostic_output = f"{stdout}\n{stderr}".strip()
         return TerminalAcmeShError(
-            f"acme.sh exited non-zero: code={exit_code}\n{stderr[:500]}",
-            stderr=stderr,
+            f"acme.sh exited non-zero: code={exit_code}\n{diagnostic_output[:500]}",
+            stderr=diagnostic_output,
         )
 
 

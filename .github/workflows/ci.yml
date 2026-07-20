@@ -3,13 +3,6 @@ name: CI
 on:
   push:
   pull_request:
-  workflow_dispatch:
-    inputs:
-      run_pebble_harness:
-        description: Run the Docker-backed Pebble DNS-01 integration harness
-        required: false
-        default: false
-        type: boolean
 
 permissions:
   contents: read
@@ -37,14 +30,5 @@ jobs:
           uv build --no-build-isolation
           /tmp/acme-api-release/bin/python -m pip install --no-deps dist/acme_api-*.whl
           /tmp/acme-api-release/bin/python -c "import acme_api"
-      - name: Check formatting
-        run: make format-check
-      - name: Lint with Ruff, then Pylint
-        run: make lint
-      - name: Type check
-        run: make type-check
-      - name: Run unit tests with coverage gates
-        run: make test-unit
-      - name: Run Pebble integration harness
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_pebble_harness }}
-        run: make test-harness
+      - name: Run canonical verification gate
+        run: make verify

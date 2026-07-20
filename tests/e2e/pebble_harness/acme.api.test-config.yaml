@@ -10,7 +10,7 @@ deployment:
 
 acme:
   binary_path: /usr/local/bin/acme.sh
-  home_dir: /tmp/acme-api-pebble-harness/acmesh
+  home_dir: /tmp/acme-api-test-acmesh
   # Skip acme.sh's public-DNS propagation check; challtestsrv answers only
   # inside the compose network, so public resolvers would never converge.
   dnssleep_seconds: 2

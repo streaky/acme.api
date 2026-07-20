@@ -192,6 +192,10 @@ def prepare_runtime_paths(settings: AppSettings) -> None:
     """Create runtime directories required by the application."""
     settings.deployment.directory.mkdir(parents=True, exist_ok=True)
     settings.acme.home_dir.mkdir(parents=True, exist_ok=True)
+    if settings.database.url.startswith("sqlite"):
+        database_path = Path(settings.database.url.rsplit("///", maxsplit=1)[-1])
+        if database_path != Path(":memory:"):
+            database_path.parent.mkdir(parents=True, exist_ok=True)
 
 
 def load_config(path: Path | None = None) -> AppSettings:

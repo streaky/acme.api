@@ -1,0 +1,12 @@
+FROM python:3.14-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/workspace
+
+WORKDIR /workspace
+
+COPY requirements-dev.txt ./
+RUN python -m pip install --no-cache-dir --require-hashes --no-deps -r requirements-dev.txt
+
+CMD ["python", "-m", "pytest", "-o", "cache_dir=/tmp/pytest-cache", "tests/e2e/pebble_harness/test_pebble_e2e.py"]
