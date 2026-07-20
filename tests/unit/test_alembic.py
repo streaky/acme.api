@@ -84,6 +84,7 @@ datefmt = %H:%M:%S
                 table_names = {
                     row[0] for row in conn.execute(text("SELECT name FROM sqlite_master WHERE type='table'"))
                 }
+                column_types = {row[1]: row[2] for row in conn.execute(text("PRAGMA table_info(api_keys)"))}
         finally:
             engine.dispose()
 
@@ -98,3 +99,4 @@ datefmt = %H:%M:%S
         assert expected_tables.issubset(table_names), (
             f"Missing tables {expected_tables - table_names}; found {table_names}"
         )
+        assert column_types["key_lookup_hash"] == "VARCHAR(128)"

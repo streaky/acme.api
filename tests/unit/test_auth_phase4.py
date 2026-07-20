@@ -62,11 +62,11 @@ class TestHashUtility:
             hash_api_key("")
 
     def test_api_key_lookup_hash_is_deterministic(self) -> None:
-        """api_key_lookup_hash returns a stable SHA-256 hex digest."""
+        """api_key_lookup_hash returns a stable PBKDF2-SHA512 digest."""
         digest = api_key_lookup_hash("admin-key-12345")
 
         assert digest == api_key_lookup_hash("admin-key-12345")
-        assert len(digest) == 64
+        assert len(digest) == 128
 
 
 class TestAuthenticatedUser:
