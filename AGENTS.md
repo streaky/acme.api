@@ -34,16 +34,19 @@ Makefile           # all build/lint/test commands
 
 | Command | Description |
 |---|---|
-| `make dev` | Set up venv + install all dependencies (required before other targets). |
-| `make deps-update` | Regenerate pinned `requirements.txt` / `requirements-dev.txt` from pyproject.toml via pip-tools. |
-| `make test [TEST=...]` | Run pytest with coverage. Scope to a file/path with `TEST=path/to/test.py`. Runs per-file coverage gate (default 80%). |
-| `make typecheck` | Run mypy (strict mode, Python 3.14). |
-| `make lint` | Run flake8 + pylint (fail-under 10.0). |
-| `make isort` | Check import ordering (--check-only --diff). |
-| `make format` | Apply isort formatting in-place. |
-| `make check-forbidden-imports` | Reject imports of intentionally unsupported packages. |
-| `make combined-check` | Run typecheck, lint, flake8, isort, check-max-lines, and test in one shot. |
-| `make simulate-ci` | Run the GitHub Actions workflow locally with `act` (requires ACT_* env settings). |
+| `make dev` | Create the locked uv development environment. |
+| `make deps-update` | Upgrade the uv lock and regenerate hashed requirement exports. |
+| `make deps-check` | Verify `uv.lock` and requirement exports agree. |
+| `make test` | Run split unit, integration, and ordinary end-to-end suites plus coverage gates. |
+| `make test-unit` | Run deterministic unit tests. |
+| `make test-integration` | Run mock-backed integration tests. |
+| `make test-e2e` | Run the Pebble-backed Docker Compose end-to-end test stack. |
+| `make type-check` | Run strict mypy. |
+| `make format-check` | Check Ruff formatting. |
+| `make lint` | Run Ruff and Pylint. |
+| `make max-lines` | Enforce the 500-line Python source limit. |
+| `make verify` | Run dependency, format, lint, type, and test gates in one shot. |
+| `make simulate-ci` | Execute the GitHub Actions workflow locally with `act`. |
 | `make build` | Build Docker image via docker compose. |
 | `make start` | Start the service (depends on build). |
 | `make stop` | Stop the service. |
@@ -51,7 +54,7 @@ Makefile           # all build/lint/test commands
 
 ## Fixtures And Documentation
 
-- Tests live in `tests/`; end-to-end mock-backed integration tests live in `tests/integration/`; fixtures live in `tests/fixtures/`.
-- Use `make test` (not raw pytest) to ensure coverage gates are enforced.
+- Tests are split into `tests/unit/`, `tests/integration/`, and `tests/e2e/`; fixtures live in `tests/fixtures/`.
+- Use `make verify` before declaring substantial work complete; it enforces the canonical quality and coverage gates.
 - Update `README.md` with project description, installation instructions, usage, and other relevant information.
 - Update this file (`AGENTS.md`) with useful information that may help future agents.

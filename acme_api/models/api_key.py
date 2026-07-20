@@ -52,11 +52,11 @@ class APIKey(Base, TimestampMixin):
         doc="PBKDF2 hash of the raw API key material.",
     )
     key_lookup_hash: Mapped[str | None] = mapped_column(
-        String(64),
+        String(128),
         unique=True,
         nullable=True,
         index=True,
-        doc="SHA-256 digest used to find the candidate key before PBKDF2 verification.",
+        doc="PBKDF2-SHA512 digest used to find the candidate key before verification.",
     )
     role: Mapped[APIKeyRole] = mapped_column(
         Enum(APIKeyRole),

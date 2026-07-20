@@ -209,6 +209,18 @@ class TestAppSettingsValidate:
         assert settings.deployment.directory.is_dir()
         assert settings.acme.home_dir.is_dir()
 
+    def test_prepare_runtime_paths_creates_absolute_database_parent(self, tmp_path: Path) -> None:
+        database_file = tmp_path / "database-parent" / "acme.db"
+        settings = AppSettings(
+            database=DatabaseConfig(url=f"sqlite+aiosqlite:///{database_file}"),
+            deployment=DeploymentConfig(directory=tmp_path / "certs"),
+            acme=AcmeConfig(home_dir=tmp_path / "acmesh"),
+        )
+
+        prepare_runtime_paths(settings)
+
+        assert database_file.parent.is_dir()
+
     def test_validate_missing_runtime_dir(self, tmp_path: Path) -> None:
         settings = AppSettings(
             database=DatabaseConfig(url=f"sqlite+aiosqlite:///{tmp_path}/test.db"),
@@ -226,11 +238,13 @@ class TestAppSettingsValidate:
             acme=AcmeConfig(home_dir=tmp_path / "acmesh"),
             dns_providers=[
                 DnsProviderConfig(
-                    name="dup", provider_name="cf",
+                    name="dup",
+                    provider_name="cf",
                     env_vars_file_path=tmp_path / "a.env",
                 ),
                 DnsProviderConfig(
-                    name="dup", provider_name="route53",
+                    name="dup",
+                    provider_name="route53",
                     env_vars_file_path=tmp_path / "b.env",
                 ),
             ],
@@ -270,7 +284,8 @@ class TestAppSettingsValidate:
             acme=AcmeConfig(home_dir=tmp_path / "acmesh"),
             dns_providers=[
                 DnsProviderConfig(
-                    name="prod", provider_name="cf",
+                    name="prod",
+                    provider_name="cf",
                     env_vars_file_path=tmp_path / "missing.env",
                 ),
             ],

@@ -5,9 +5,8 @@ from __future__ import annotations
 import dataclasses as dc
 import datetime as dt
 import uuid
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import Awaitable
 
 from apscheduler.schedulers.asyncio import (  # type: ignore[import-untyped]
     AsyncIOScheduler,
@@ -57,7 +56,7 @@ class RenewalScheduler:
         self._config = config
         self._webhook_dispatcher_factory = webhook_dispatcher_factory
         self._deployment = deployment
-        self._scheduler = scheduler or AsyncIOScheduler(timezone=dt.timezone.utc)
+        self._scheduler = scheduler or AsyncIOScheduler(timezone=dt.UTC)
 
     async def start(self) -> None:
         """Start APScheduler and reconstruct renewal jobs from the database."""
@@ -75,9 +74,7 @@ class RenewalScheduler:
     async def rebuild_jobs(self) -> int:
         """Schedule renewal jobs for all renewable certificates."""
         async with self._session_factory() as session:
-            result = await session.execute(
-                select(Certificate).where(Certificate.status == CertificateStatus.VALID)
-            )
+            result = await session.execute(select(Certificate).where(Certificate.status == CertificateStatus.VALID))
             certificates = list(result.scalars().all())
             for certificate in certificates:
                 await self._emit_expiring_if_due(session, certificate)
@@ -175,9 +172,7 @@ class RenewalScheduler:
                     details={
                         "domains": certificate.domains,
                         "expires_at": result.cert.expires_at.isoformat(),
-                        "deployment_path": str(deployment_path)
-                        if deployment_path is not None
-                        else None,
+                        "deployment_path": str(deployment_path) if deployment_path is not None else None,
                     },
                 )
             )
@@ -195,7 +190,7 @@ class RenewalScheduler:
         if certificate.expiry_date is None:
             return
         expiry = _as_utc(certificate.expiry_date)
-        now = dt.datetime.now(dt.timezone.utc)
+        now = dt.datetime.now(dt.UTC)
         if expiry - dt.timedelta(days=self._config.window_days) > now:
             return
         if await expiring_event_exists(session, certificate.id):
@@ -299,7 +294,7 @@ def next_renewal_run_time(
     """Calculate when a certificate should be renewed."""
     if expiry_date is None:
         return None
-    now = now_factory() if now_factory else dt.datetime.now(dt.timezone.utc)
+    now = now_factory() if now_factory else dt.datetime.now(dt.UTC)
     expiry = _as_utc(expiry_date)
     scheduled = expiry - dt.timedelta(days=window_days)
     return now if scheduled <= now else scheduled
@@ -329,7 +324,7 @@ def _retry_job_id(certificate_id: uuid.UUID) -> str:
 def _retry_time(previous_attempts: int) -> dt.datetime:
     """Return the next retry time using exponential backoff."""
     delay_minutes = 2 ** max(previous_attempts, 0)
-    return dt.datetime.now(dt.timezone.utc) + dt.timedelta(minutes=delay_minutes)
+    return dt.datetime.now(dt.UTC) + dt.timedelta(minutes=delay_minutes)
 
 
 async def _attempt_count(session: AsyncSession, certificate_id: uuid.UUID) -> int:
@@ -346,5 +341,5 @@ async def _attempt_count(session: AsyncSession, certificate_id: uuid.UUID) -> in
 def _as_utc(value: dt.datetime) -> dt.datetime:
     """Normalize naive or aware datetimes to UTC."""
     if value.tzinfo is None:
-        return value.replace(tzinfo=dt.timezone.utc)
-    return value.astimezone(dt.timezone.utc)
+        return value.replace(tzinfo=dt.UTC)
+    return value.astimezone(dt.UTC)

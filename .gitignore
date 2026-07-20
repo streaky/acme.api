@@ -11,5 +11,6 @@ coverage-data/
 .coverage
 
 data/
+build/
 
 /act

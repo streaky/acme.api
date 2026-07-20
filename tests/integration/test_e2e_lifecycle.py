@@ -85,7 +85,7 @@ class ArtifactBackend:
             privkey_path=cert_path,
             chain_path=cert_path,
             fullchain_path=cert_path,
-            expires_at=dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=90),
+            expires_at=dt.datetime.now(dt.UTC) + dt.timedelta(days=90),
         )
 
     def _result(
@@ -111,7 +111,7 @@ class ArtifactBackend:
                 privkey_path=str(paths["key"]),
                 chain_path=str(paths["chain"]),
                 fullchain_path=str(paths["fullchain"]),
-                expires_at=dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=90),
+                expires_at=dt.datetime.now(dt.UTC) + dt.timedelta(days=90),
             ),
             domains=domains,
         )
@@ -243,10 +243,7 @@ def test_full_certificate_lifecycle_with_webhooks(
             "certificate.revoked",
         }.issubset(event_types)
 
-    webhook_events = {
-        request.headers["X-Webhook-Event"]
-        for request in CapturingWebhookDispatcher.requests
-    }
+    webhook_events = {request.headers["X-Webhook-Event"] for request in CapturingWebhookDispatcher.requests}
     assert {
         "certificate.created",
         "certificate.issued",
@@ -280,10 +277,8 @@ async def test_scheduler_rebuilds_expiring_certificate_jobs(tmp_path: Path) -> N
 
         async with session_factory() as session:
             events = (
-                await session.execute(
-                    select(Event).where(Event.event_type == "certificate.expiring")
-                )
-            ).scalars().all()
+                (await session.execute(select(Event).where(Event.event_type == "certificate.expiring"))).scalars().all()
+            )
 
         assert len(events) == 1
         assert scheduler.schedule_certificate(certificate) is not None
@@ -303,26 +298,32 @@ def test_role_matrix_for_integration_endpoints(tmp_path: Path) -> None:
         assert client.get("/v1/accounts", headers=readonly).status_code == 200
         assert client.get("/v1/providers", headers=readonly).status_code == 200
         assert client.get("/v1/events", headers=readonly).status_code == 200
-        assert client.post(
-            "/v1/certificates",
-            headers=readonly,
-            json={
-                "name": "forbidden",
-                "domains": ["forbidden.example.com"],
-                "acme_account_ref": "letsencrypt-staging",
-                "dns_provider_ref": "cloudflare-main",
-            },
-        ).status_code == 403
-        assert client.post(
-            "/v1/certificates",
-            headers=operator,
-            json={
-                "name": "allowed",
-                "domains": ["allowed.example.com"],
-                "acme_account_ref": "letsencrypt-staging",
-                "dns_provider_ref": "cloudflare-main",
-            },
-        ).status_code == 202
+        assert (
+            client.post(
+                "/v1/certificates",
+                headers=readonly,
+                json={
+                    "name": "forbidden",
+                    "domains": ["forbidden.example.com"],
+                    "acme_account_ref": "letsencrypt-staging",
+                    "dns_provider_ref": "cloudflare-main",
+                },
+            ).status_code
+            == 403
+        )
+        assert (
+            client.post(
+                "/v1/certificates",
+                headers=operator,
+                json={
+                    "name": "allowed",
+                    "domains": ["allowed.example.com"],
+                    "acme_account_ref": "letsencrypt-staging",
+                    "dns_provider_ref": "cloudflare-main",
+                },
+            ).status_code
+            == 202
+        )
 
 
 def _add_webhook_config(client: TestClient) -> None:
@@ -352,7 +353,7 @@ async def _create_valid_expiring_certificate(
             domains=["expiring.example.com"],
             acme_account_ref="letsencrypt-staging",
             dns_provider_ref="cloudflare-main",
-            expiry_date=dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=5),
+            expiry_date=dt.datetime.now(dt.UTC) + dt.timedelta(days=5),
             status=CertificateStatus.VALID,
         )
         session.add(certificate)

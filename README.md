@@ -6,7 +6,7 @@ Lightweight, self-hosted REST service for managing ACME certificates through a m
 
 This project is entirely experimental currently. Do not use it for production, important certificates, or anything you are not prepared to delete and rebuild.
 
-`acme.api` is meant to be consumed only by applications that enforce strict access controls as part of the application stack — it is never intended for direct exposure on the internet or general internal systems. A system like this has severe security implications if misconfigured or misused, and the author is not responsible for any damage caused by its use. I considered a tool like this to be necessary for some specific systems, tightly controlled, and I'd have had to essentially build it regardless.
+`acme.api` is meant to be consumed only by applications that enforce strict access controls as part of the application stack — it is never intended for direct exposure on the internet or general internal systems. A system like this has severe security implications if misconfigured or misused, and the author is not responsible for any damage caused by its use. I considered a tool like this to be necessary for some specific systems I was working on, and I'd have had to essentially build it regardless as part of that other system, so I thought why not genericize it and share it.
 
 ## Status
 
@@ -37,30 +37,31 @@ The bundled compose config at `docker/config.yaml` is intentionally minimal so t
 
 ```sh
 make dev
-make combined-check
+make verify
 ```
 
 Useful targets:
 
 | Command | Description |
 |---|---|
-| `make test` | Run pytest with coverage and the per-file coverage gate |
-| `make test-harness` | Run the optional Docker-backed Pebble DNS-01 end-to-end test |
-| `make typecheck` | Run strict mypy |
-| `make lint` | Run flake8 and pylint |
-| `make isort` | Check import ordering |
-| `make check-max-lines` | Enforce file size limits |
-| `make check-forbidden-imports` | Reject imports of intentionally unsupported packages |
-| `make combined-check` | Run the full local release gate |
-| `make simulate-ci` | Run the GitHub Actions workflow locally with `act` |
+| `make test` | Run the unit, integration, and ordinary end-to-end suites plus coverage gates |
+| `make test-unit` | Run deterministic unit tests |
+| `make test-integration` | Run mock-backed integration tests |
+| `make test-e2e` | Run the Pebble-backed Docker Compose end-to-end test stack |
+| `make deps-check` | Verify `uv.lock` and both hashed requirements exports |
+| `make deps-update` | Upgrade dependencies and regenerate `uv.lock` and exports |
+| `make format-check` | Check Ruff formatting |
+| `make lint` | Run Ruff and Pylint |
+| `make type-check` | Run strict type checking |
+| `make verify` | Run the full local quality and test gate |
+| `make simulate-ci` | Execute the GitHub Actions workflow locally with `act` |
 | `make build` | Build the Docker image |
 | `make start` | Start the Docker compose service |
 | `make stop` | Stop the Docker compose service |
 | `make logs` | Follow container logs |
 
-`make simulate-ci` requires `act` settings in the shell or `.env`: `ACT_VERSION`, `ACT_PLATFORM`, and `ACT_IMAGE`.
+Development uses `uv` for locking and export verification. `make dev` follows Vulpine's hashed-install workflow: it bootstraps `.venv` and installs `requirements-dev.txt` with `--require-hashes --no-deps`.
 
-`make test-harness` is intentionally separate from `make test` and `make combined-check`: it needs Docker daemon access, while the standard release gate is designed to run in both GitHub Actions and `act`. GitHub Actions can run it explicitly from **Run workflow** by enabling **Run the Docker-backed Pebble DNS-01 integration harness**.
 
 ## Configuration
 

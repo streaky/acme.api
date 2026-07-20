@@ -1,0 +1,50 @@
+services:
+  pebble:
+    image: ghcr.io/letsencrypt/pebble:latest
+    command: -config test/config/pebble-config.json -strict -dnsserver pebble-challtestsrv:8053
+    environment:
+      PEBBLE_VA_NOSLEEP: "1"
+    volumes:
+      - ./tests/e2e/pebble_harness/pebble-config.json:/test/config/pebble-config.json:ro
+    depends_on:
+      - pebble-challtestsrv
+
+  pebble-challtestsrv:
+    image: ghcr.io/letsencrypt/pebble-challtestsrv:latest
+    command: -defaultIPv6 "" -defaultIPv4 ""
+
+
+  acme-api-test:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: acme-api:test
+    environment:
+      ACME_API_CONFIG: /config/acme.api.test-config.yaml
+      ACME_API_PORT: "8080"
+      HTTPS_INSECURE: "1"
+    volumes:
+      - ./tests/e2e/pebble_harness/acme.api.test-config.yaml:/config/acme.api.test-config.yaml:ro
+      - ./tests/e2e/pebble_harness/challtestsrv.env:/fixtures/challtestsrv.env:ro
+      - ./tests/e2e/pebble_harness/dns_challtestsrv.sh:/opt/acme.sh/dnsapi/dns_challtestsrv.sh:ro
+      - ./build/pebble-test-runtime:/tmp/acme-api-pebble-harness
+    depends_on:
+      pebble:
+        condition: service_started
+
+  e2e-tests:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.e2e-test
+    environment:
+      PEBBLE_API_URL: http://acme-api-test:8080
+      PEBBLE_RUNTIME_DIR: /tmp/acme-api-pebble-harness
+    volumes:
+      - .:/workspace:ro
+      - ./build/pebble-test-runtime:/tmp/acme-api-pebble-harness:ro
+    depends_on:
+      acme-api-test:
+        condition: service_started
+
+volumes:
+  pebble-test-runtime:

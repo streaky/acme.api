@@ -198,7 +198,7 @@ def _parse_acmesh_datetime(s: str) -> _dt.datetime:
         try:
             parsed = _dt.datetime.strptime(s, fmt)
             if parsed.tzinfo is None:
-                return parsed.replace(tzinfo=_dt.timezone.utc)
+                return parsed.replace(tzinfo=_dt.UTC)
             return parsed
         except ValueError:
             continue

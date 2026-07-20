@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable, Generator
 from pathlib import Path
-from typing import Any, Callable, Generator, cast
+from typing import Any, cast
 
 import pytest
 from fastapi import FastAPI, Request
@@ -84,7 +85,7 @@ async def _request_id_for_raw_header(value: bytes) -> str:
         _scope: dict[str, Any],
         _receive: Callable[..., Any],
         send: Callable[[dict[str, Any]], Any],
-    ) -> None:  # noqa: ANN401
+    ) -> None:
         await send({"type": "http.response.start", "status": 204})
 
     async def _receive() -> dict[str, Any]:
@@ -166,9 +167,7 @@ async def test_middleware_resets_context_on_exception() -> None:
     """Context variable is reset even when the handler raises."""
     from acme_api.middleware import RequestIdMiddleware
 
-    async def _app(
-        scope: dict[str, Any], receive: Callable[..., Any], send: Callable[[dict[str, Any]], Any]
-    ) -> None:  # noqa: ANN401
+    async def _app(scope: dict[str, Any], receive: Callable[..., Any], send: Callable[[dict[str, Any]], Any]) -> None:
         raise RuntimeError("boom")
 
     middleware = RequestIdMiddleware(app=_app)
@@ -198,7 +197,7 @@ async def test_middleware_adds_headers_key_when_missing() -> None:
         _scope: dict[str, Any],
         _receive: Callable[..., Any],
         send: Callable[[dict[str, Any]], Any],
-    ) -> None:  # noqa: ANN401
+    ) -> None:
         await send({"type": "http.response.start", "status": 204})
 
     async def _send(message: dict[str, Any]) -> None:
@@ -220,8 +219,8 @@ async def test_middleware_skips_non_http_scope() -> None:
     async def _send(message: dict[str, Any]) -> None:
         messages.append(message)
 
-    middleware = RequestIdMiddleware(  # noqa: B035 — intentional lambda for test
-        app=lambda s, r, sd: _send(sd),  # noqa: B026
+    middleware = RequestIdMiddleware(
+        app=lambda s, r, sd: _send(sd),
     )
 
     scope = {"type": "websocket", "path": "/ws"}
@@ -237,7 +236,7 @@ async def test_middleware_preserves_app() -> None:
 
     async def _dummy(
         _scope: dict[str, Any], _receive: Callable[..., Any], _send: Callable[[dict[str, Any]], Any]
-    ) -> None:  # noqa: ANN401
+    ) -> None:
         pass
 
     middleware = RequestIdMiddleware(app=_dummy)

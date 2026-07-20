@@ -13,9 +13,7 @@ from acme_api.db import get_db_session
 from acme_api.models.api_key import APIKey, APIKeyRole
 
 
-async def require_admin(
-    request: Request, db_session: AsyncSession = Depends(get_db_session)
-) -> AuthenticatedUser:
+async def require_admin(request: Request, db_session: AsyncSession = Depends(get_db_session)) -> AuthenticatedUser:
     """Require the request holder to have admin role."""
     user = await _authenticate(request, db_session)
     if user.role != APIKeyRole.ADMIN:
@@ -26,9 +24,7 @@ async def require_admin(
     return user
 
 
-async def require_operator(
-    request: Request, db_session: AsyncSession = Depends(get_db_session)
-) -> AuthenticatedUser:
+async def require_operator(request: Request, db_session: AsyncSession = Depends(get_db_session)) -> AuthenticatedUser:
     """Require the request holder to have operator role or higher."""
     user = await _authenticate(request, db_session)
     allowed = {APIKeyRole.ADMIN, APIKeyRole.OPERATOR}
@@ -40,9 +36,7 @@ async def require_operator(
     return user
 
 
-async def require_readonly(
-    request: Request, db_session: AsyncSession = Depends(get_db_session)
-) -> AuthenticatedUser:
+async def require_readonly(request: Request, db_session: AsyncSession = Depends(get_db_session)) -> AuthenticatedUser:
     """Require the request holder to have any authenticated role."""
     return await _authenticate(request, db_session)
 
@@ -93,10 +87,10 @@ async def _authenticate(request: Request, db_session: AsyncSession) -> Authentic
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    now = _dt.datetime.now(_dt.timezone.utc)
+    now = _dt.datetime.now(_dt.UTC)
     expires_at = api_key.expires_at
     if expires_at and expires_at.tzinfo is None:
-        expires_at = expires_at.replace(tzinfo=_dt.timezone.utc)
+        expires_at = expires_at.replace(tzinfo=_dt.UTC)
     if expires_at and now > expires_at:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

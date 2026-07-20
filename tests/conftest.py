@@ -47,7 +47,7 @@ def app(tmp_path: Path) -> FastAPI:
 
 
 @pytest.fixture()
-async def client(app: FastAPI) -> AsyncGenerator[AsyncClient, None]:
+async def client(app: FastAPI) -> AsyncGenerator[AsyncClient]:
     """Return an async test client for the FastAPI app."""
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:

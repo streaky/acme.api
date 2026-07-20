@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid as _uuid
 from dataclasses import dataclass
 from datetime import datetime
-from hashlib import sha256
+from hashlib import pbkdf2_hmac
 from typing import cast
 
 from passlib.hash import pbkdf2_sha512 as _pbkdf2_sha512  # type: ignore[import-untyped]
@@ -13,18 +13,25 @@ from passlib.hash import pbkdf2_sha512 as _pbkdf2_sha512  # type: ignore[import-
 from acme_api.models.api_key import APIKeyRole
 
 _HASH_ROUNDS = 200_000
+_LOOKUP_HASH_ROUNDS = 100_000
+_LOOKUP_HASH_SALT = b"acme.api/api-key-lookup/v1"
 
 
 def api_key_lookup_hash(raw_key: str) -> str:
-    """Return a deterministic lookup digest for API key database filtering.
+    """Return a deterministic, work-factor-protected database lookup digest.
 
     The digest is not used as the verifier; successful authentication still
-    requires matching the PBKDF2 hash. Its purpose is to avoid checking every
-    active PBKDF2 hash on each request.
+    requires matching the separately salted PBKDF2 hash. Its purpose is to
+    avoid checking every active verifier hash on each request.
     """
     if not raw_key:
         raise ValueError("API key must not be empty.")
-    return sha256(raw_key.encode("utf-8")).hexdigest()
+    return pbkdf2_hmac(
+        "sha512",
+        raw_key.encode("utf-8"),
+        _LOOKUP_HASH_SALT,
+        _LOOKUP_HASH_ROUNDS,
+    ).hex()
 
 
 def hash_api_key(raw_key: str) -> str:
@@ -98,8 +105,6 @@ class ForbiddenError(AuthenticationError):
         required_role: The minimum role needed for this operation (may be ``None``).
     """
 
-    def __init__(
-        self, message: str, required_role: APIKeyRole | None = None
-    ) -> None:
+    def __init__(self, message: str, required_role: APIKeyRole | None = None) -> None:
         super().__init__(message, status_code=403)
         self.required_role = required_role

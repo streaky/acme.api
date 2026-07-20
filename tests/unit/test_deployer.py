@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import pathlib
 import stat
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import patch
 
 import pytest
@@ -36,7 +36,7 @@ def _write_sources(tmp_path: pathlib.Path) -> CertExpiry:
         chain_path=str(source_dir / "chain.pem"),
         fullchain_path=str(source_dir / "fullchain.pem"),
         privkey_path=str(source_dir / "privkey.pem"),
-        expires_at=datetime(2026, 12, 31, 23, 59, tzinfo=timezone.utc),
+        expires_at=datetime(2026, 12, 31, 23, 59, tzinfo=UTC),
     )
 
 

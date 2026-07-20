@@ -2,43 +2,33 @@ name: CI
 
 on:
   push:
-    branches:
-      - main
-      - master
   pull_request:
-  workflow_dispatch:
-    inputs:
-      run_pebble_harness:
-        description: Run the Docker-backed Pebble DNS-01 integration harness
-        required: false
-        default: false
-        type: boolean
+
+permissions:
+  contents: read
 
 jobs:
-  quality:
-    name: Quality Gates
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-
+  foundation:
+    runs-on: ubuntu-24.04
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.14"
-          cache: pip
-          cache-dependency-path: |
-            requirements.txt
-            requirements-dev.txt
-
-      - name: Install dependencies
-        run: make dev
-
-      - name: Run local release gates
-        run: make combined-check
-
-      - name: Run Pebble integration harness
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_pebble_harness }}
-        run: make test-harness
+      - name: Install reviewed uv release
+        run: python -m pip install --disable-pip-version-check uv==0.11.29
+      - name: Install locked development environment
+        run: uv sync --locked
+      - name: Verify lock and exports
+        run: make deps-check
+      - name: Verify hashed production install without dependency resolution
+        run: |
+          python -m venv /tmp/acme-api-release
+          /tmp/acme-api-release/bin/python -m pip install --require-hashes --no-deps -r requirements.txt
+      - name: Build and install acme.api without dependency resolution
+        run: |
+          uv build --no-build-isolation
+          /tmp/acme-api-release/bin/python -m pip install --no-deps dist/acme_api-*.whl
+          /tmp/acme-api-release/bin/python -c "import acme_api"
+      - name: Run canonical verification gate
+        run: make verify

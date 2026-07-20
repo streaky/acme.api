@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -109,10 +109,11 @@ class TestCertificateCreate:
 
 # ── TestCertificateRead ────────────────────────────────────────────────
 
+
 class TestCertificateRead:
     def test_from_attributes_roundtrip(self) -> None:
         """Build a dict of attributes and construct CertificateRead via model_validate."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         data = {
             "id": uuid.uuid4(),
             "name": "round-trip-cert",
@@ -149,6 +150,7 @@ class TestCertificateRead:
 
 # ── TestEventCreate ────────────────────────────────────────────────────
 
+
 class TestEventCreate:
     def test_valid_creation(self) -> None:
         evt = EventCreate(
@@ -167,6 +169,7 @@ class TestEventCreate:
 
 # ── TestAcmeAccountRead ────────────────────────────────────────────────
 
+
 class TestAcmeAccountRead:
     def test_valid_creation(self) -> None:
         acct = AcmeAccountRead(
@@ -184,6 +187,7 @@ class TestAcmeAccountRead:
 
 
 # ── TestDnsProviderRead ────────────────────────────────────────────────
+
 
 class TestDnsProviderRead:
     def test_valid_creation(self) -> None:

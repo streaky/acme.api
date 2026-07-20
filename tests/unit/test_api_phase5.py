@@ -78,7 +78,7 @@ class _ArtifactBackend:
                 privkey_path=str(paths["key"]),
                 chain_path=str(paths["chain"]),
                 fullchain_path=str(paths["fullchain"]),
-                expires_at=dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=90),
+                expires_at=dt.datetime.now(dt.UTC) + dt.timedelta(days=90),
             ),
             domains=domains,
         )
@@ -139,9 +139,7 @@ def test_certificate_lifecycle_endpoints(tmp_path: Path) -> None:
         assert detail.json()["status"] == "valid"
         assert (tmp_path / "certs" / "example.com" / "fullchain.pem").is_file()
 
-        renewed = client.post(
-            f"/v1/certificates/{certificate_id}/renew", headers=headers
-        )
+        renewed = client.post(f"/v1/certificates/{certificate_id}/renew", headers=headers)
         assert renewed.status_code == 202
         assert renewed.json()["status"] == "valid"
 
@@ -157,12 +155,8 @@ def test_config_and_events_endpoints(tmp_path: Path) -> None:
     headers = {"Authorization": "Bearer readonly-key-12345"}
     operator_headers = {"Authorization": "Bearer operator-key-12345"}
     with TestClient(_make_app(tmp_path)) as client:
-        assert client.get("/v1/accounts", headers=headers).json()[0]["name"] == (
-            "letsencrypt-production"
-        )
-        assert client.get("/v1/providers", headers=headers).json()[0]["name"] == (
-            "cloudflare-main"
-        )
+        assert client.get("/v1/accounts", headers=headers).json()[0]["name"] == ("letsencrypt-production")
+        assert client.get("/v1/providers", headers=headers).json()[0]["name"] == ("cloudflare-main")
         client.post(
             "/v1/certificates",
             headers=operator_headers,
@@ -174,8 +168,6 @@ def test_config_and_events_endpoints(tmp_path: Path) -> None:
             },
         )
 
-        events = client.get(
-            "/v1/events?event_type=certificate.created", headers=headers
-        )
+        events = client.get("/v1/events?event_type=certificate.created", headers=headers)
         assert events.status_code == 200
         assert events.json()[0]["event_type"] == "certificate.created"

@@ -7,11 +7,11 @@ from acme_api.backend.mock_backend import MockAcmeBackend
 from acme_api.backend.protocol import AcmeBackend, ChallengeMethod
 
 __all__ = [
+    "AccountInfo",
     "AcmeBackend",
     "AcmeShBackend",
-    "AccountInfo",
-    "ChallengeMethod",
     "CertExpiry",
+    "ChallengeMethod",
     "IssuanceResult",
     "MockAcmeBackend",
     "TerminalAcmeShError",

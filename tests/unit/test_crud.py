@@ -28,7 +28,7 @@ def settings(tmp_path: Path) -> AppSettings:
 
 
 @pytest.fixture()
-async def engine(settings: AppSettings) -> AsyncGenerator[AsyncEngine, None]:
+async def engine(settings: AppSettings) -> AsyncGenerator[AsyncEngine]:
     engine = init_engine(settings=settings)
     try:
         yield engine
@@ -46,7 +46,7 @@ def session_factory(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:
 async def db(
     engine: AsyncEngine,
     session_factory: async_sessionmaker[AsyncSession],
-) -> AsyncGenerator[AsyncSession, None]:
+) -> AsyncGenerator[AsyncSession]:
     await init_db(engine)
     async with session_factory() as s:
         yield s
@@ -59,7 +59,6 @@ async def db(
 
 
 class TestCertificateCRUD:
-
     @pytest.mark.anyio
     async def test_create_certificate(self, db: AsyncSession) -> None:
         cert = Certificate(
@@ -138,7 +137,6 @@ class TestCertificateCRUD:
 
 
 class TestEventCRUD:
-
     @pytest.mark.anyio
     async def test_create_event(self, db: AsyncSession) -> None:
         cert = Certificate(

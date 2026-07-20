@@ -13,6 +13,7 @@ from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy.engine import make_url
 
 
 class StrictConfigModel(BaseModel):
@@ -70,9 +71,7 @@ class AcmeAccountConfig(StrictConfigModel):
     """
 
     name: str = Field(min_length=1)
-    server_url: str = Field(
-        default="https://acme-v02.api.letsencrypt.org/directory", min_length=1
-    )
+    server_url: str = Field(default="https://acme-v02.api.letsencrypt.org/directory", min_length=1)
     account_key_path: Path | None = None
 
 
@@ -129,6 +128,7 @@ class AppSettings(StrictConfigModel):
         dns_providers: Configured DNS provider aliases.
         acme_accounts: Configured ACME account references.
     """
+
     log: LogConfig = Field(default_factory=LogConfig)
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
     deployment: DeploymentConfig = Field(default_factory=DeploymentConfig)
@@ -156,16 +156,12 @@ class AppSettings(StrictConfigModel):
         # v1 is SQLite-backed. Keep validation narrow until another database
         # backend is intentionally supported end to end.
         if not self.database.url.startswith("sqlite"):
-            errors.append(
-                f"database.url must start with 'sqlite', got: {self.database.url!r}"
-            )
+            errors.append(f"database.url must start with 'sqlite', got: {self.database.url!r}")
 
         # Deployment directory should exist. Creation is handled separately so
         # validation remains free of runtime side effects.
         if not self.deployment.directory.exists():
-            errors.append(
-                f"deployment.directory '{self.deployment.directory}' does not exist"
-            )
+            errors.append(f"deployment.directory '{self.deployment.directory}' does not exist")
 
         # ACME home directory should exist. Creation is handled separately so
         # validation remains free of runtime side effects.
@@ -186,8 +182,7 @@ class AppSettings(StrictConfigModel):
         for provider in self.dns_providers:
             if not provider.env_vars_file_path.exists():
                 errors.append(
-                    f"dns_provider '{provider.name}': env_vars_file_path "
-                    f"'{provider.env_vars_file_path}' does not exist"
+                    f"dns_provider '{provider.name}': env_vars_file_path '{provider.env_vars_file_path}' does not exist"
                 )
 
         if errors:
@@ -198,6 +193,10 @@ def prepare_runtime_paths(settings: AppSettings) -> None:
     """Create runtime directories required by the application."""
     settings.deployment.directory.mkdir(parents=True, exist_ok=True)
     settings.acme.home_dir.mkdir(parents=True, exist_ok=True)
+    if settings.database.url.startswith("sqlite"):
+        database_name = make_url(settings.database.url).database
+        if database_name and database_name != ":memory:":
+            Path(database_name).parent.mkdir(parents=True, exist_ok=True)
 
 
 def load_config(path: Path | None = None) -> AppSettings:

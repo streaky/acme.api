@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid as _uuid
 from pathlib import Path
-from typing import Callable, cast
+from typing import Protocol, cast
 
 import pytest
 from sqlalchemy import text
@@ -18,6 +18,13 @@ from acme_api.db import get_db, get_session_factory, init_db, init_engine
 # ---------------------------------------------------------------------------
 
 
+class _PoolWithSize(Protocol):
+    """Model the queue pool API used by the configurable SQLite test engine."""
+
+    def size(self) -> int:
+        """Return the configured pool size."""
+
+
 @pytest.fixture()
 def settings(tmp_path: Path) -> AppSettings:
     return AppSettings(
@@ -29,6 +36,7 @@ def settings(tmp_path: Path) -> AppSettings:
 # ---------------------------------------------------------------------------
 # TestInitEngine
 # ---------------------------------------------------------------------------
+
 
 class TestInitEngine:
     def test_creates_engine_and_session_factory(self, settings: AppSettings) -> None:
@@ -49,13 +57,14 @@ class TestInitEngine:
 
         engine = init_engine(settings=cfg)
 
-        pool_size = cast(Callable[[], int], getattr(engine.pool, "size"))
+        pool_size = cast(_PoolWithSize, engine.pool).size
         assert pool_size() == custom_pool_size
 
 
 # ---------------------------------------------------------------------------
 # TestGetDb
 # ---------------------------------------------------------------------------
+
 
 class TestGetDb:
     @pytest.mark.anyio
@@ -130,6 +139,7 @@ class TestGetDb:
 # TestInitDb
 # ---------------------------------------------------------------------------
 
+
 class TestInitDb:
     @pytest.mark.anyio
     async def test_creates_all_tables(self, settings: AppSettings) -> None:
@@ -138,9 +148,7 @@ class TestInitDb:
             await init_db(engine=engine)
 
             async with engine.connect() as conn:
-                result = await conn.execute(
-                    text("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
-                )
+                result = await conn.execute(text("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"))
                 table_names = [row[0] for row in result.fetchall()]
         finally:
             await engine.dispose()

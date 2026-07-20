@@ -33,8 +33,7 @@ async def seed_initial_keys(db: AsyncSession, settings: AppSettings) -> list[API
             role = APIKeyRole(role_str)
         except ValueError as exc:
             raise ValueError(
-                f"Invalid bootstrap key role '{role_str}'. "
-                f"Valid roles: {[r.value for r in APIKeyRole]}"
+                f"Invalid bootstrap key role '{role_str}'. Valid roles: {[r.value for r in APIKeyRole]}"
             ) from exc
 
         existing = await db.scalar(
@@ -43,8 +42,9 @@ async def seed_initial_keys(db: AsyncSession, settings: AppSettings) -> list[API
             )
         )
         if existing is not None:
-            if existing.key_lookup_hash is None:
-                existing.key_lookup_hash = api_key_lookup_hash(raw_key)
+            lookup_hash = api_key_lookup_hash(raw_key)
+            if existing.key_lookup_hash != lookup_hash:
+                existing.key_lookup_hash = lookup_hash
                 await db.commit()
             continue
 

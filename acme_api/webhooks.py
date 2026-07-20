@@ -10,7 +10,7 @@ import ipaddress
 import json
 import socket
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -50,12 +50,12 @@ class WebhookPayload:
         """Return a JSON-serializable payload."""
         expiry = self.expiry
         if expiry and expiry.tzinfo is None:
-            expiry = expiry.replace(tzinfo=timezone.utc)
+            expiry = expiry.replace(tzinfo=UTC)
         return {
             "event": self.event,
             "certificate_id": str(self.certificate_id) if self.certificate_id else None,
             "certificate_name": self.certificate_name,
-            "expiry": expiry.astimezone(timezone.utc).isoformat() if expiry else None,
+            "expiry": expiry.astimezone(UTC).isoformat() if expiry else None,
             "domains": self.domains,
             "details": self.details,
         }
@@ -82,9 +82,7 @@ def _validate_webhook_url(url: str) -> None:
     except ValueError as exc:
         for resolved_ip in _resolve_host_ips(host):
             if _is_unsafe_webhook_ip(resolved_ip):
-                raise WebhookDeliveryError(
-                    "unsafe webhook url: non-public IP targets are not allowed"
-                ) from exc
+                raise WebhookDeliveryError("unsafe webhook url: non-public IP targets are not allowed") from exc
         return
 
     if _is_unsafe_webhook_ip(ip):
@@ -159,7 +157,7 @@ class WebhookDispatcher:
         self._client = client
         self._owns_client = client is None
 
-    async def __aenter__(self) -> "WebhookDispatcher":
+    async def __aenter__(self) -> WebhookDispatcher:
         if self._client is None:
             self._client = httpx2.AsyncClient(timeout=self._settings.timeout_seconds)
         return self
@@ -204,14 +202,8 @@ class WebhookDispatcher:
 
     async def _matching_configs(self, event_type: str) -> list[WebhookConfig]:
         """Return enabled webhook configs subscribed to an event."""
-        result = await self._session.execute(
-            select(WebhookConfig).where(WebhookConfig.enabled.is_(True))
-        )
-        return [
-            config
-            for config in result.scalars().all()
-            if "*" in config.events or event_type in config.events
-        ]
+        result = await self._session.execute(select(WebhookConfig).where(WebhookConfig.enabled.is_(True)))
+        return [config for config in result.scalars().all() if "*" in config.events or event_type in config.events]
 
     async def _deliver_to_config(
         self,
