@@ -13,6 +13,7 @@ from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy.engine import make_url
 
 
 class StrictConfigModel(BaseModel):
@@ -193,9 +194,9 @@ def prepare_runtime_paths(settings: AppSettings) -> None:
     settings.deployment.directory.mkdir(parents=True, exist_ok=True)
     settings.acme.home_dir.mkdir(parents=True, exist_ok=True)
     if settings.database.url.startswith("sqlite"):
-        database_path = Path(settings.database.url.rsplit("///", maxsplit=1)[-1])
-        if database_path != Path(":memory:"):
-            database_path.parent.mkdir(parents=True, exist_ok=True)
+        database_name = make_url(settings.database.url).database
+        if database_name and database_name != ":memory:":
+            Path(database_name).parent.mkdir(parents=True, exist_ok=True)
 
 
 def load_config(path: Path | None = None) -> AppSettings:

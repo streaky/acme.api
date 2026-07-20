@@ -47,7 +47,11 @@ test-integration:
 	uv run python dev/run_tests.py integration
 
 test-e2e:
-	rm -rf build/pebble-test-runtime; mkdir -p build/pebble-test-runtime/data build/pebble-test-runtime/certificates build/pebble-test-runtime/acmesh; chmod -R 777 build/pebble-test-runtime; docker compose -f docker-compose.test.yml up --build --abort-on-container-exit --exit-code-from e2e-tests
+	set -e; \
+	rm -rf build/pebble-test-runtime && \
+	mkdir -p build/pebble-test-runtime/data build/pebble-test-runtime/certificates build/pebble-test-runtime/acmesh && \
+	chmod -R 777 build/pebble-test-runtime && \
+	docker compose -f docker-compose.test.yml up --build --abort-on-container-exit --exit-code-from e2e-tests
 
 test-coverage:
 	mkdir -p build
