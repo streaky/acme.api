@@ -61,7 +61,7 @@ formatter = generic
 [formatter_generic]
 format = %(levelname)-5.5s [%(name)s] %(message)s
 datefmt = %H:%M:%S
-"""  # noqa: E501
+"""
         ini_path = tmp_path / "alembic_test.ini"
         ini_path.write_text(ini_content, encoding="utf-8")
 
@@ -75,19 +75,14 @@ datefmt = %H:%M:%S
             text=True,
             check=False,
         )
-        assert result.returncode == 0, (
-            f"alembic upgrade head failed:\n{result.stdout}\n{result.stderr}"
-        )
+        assert result.returncode == 0, f"alembic upgrade head failed:\n{result.stdout}\n{result.stderr}"
 
         # 4. Verify that all expected tables were created by the migration
         engine = create_engine(db_url)
         try:
             with engine.connect() as conn:
                 table_names = {
-                    row[0]
-                    for row in conn.execute(
-                        text("SELECT name FROM sqlite_master WHERE type='table'")
-                    )
+                    row[0] for row in conn.execute(text("SELECT name FROM sqlite_master WHERE type='table'"))
                 }
         finally:
             engine.dispose()

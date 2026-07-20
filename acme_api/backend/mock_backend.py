@@ -68,5 +68,5 @@ class MockAcmeBackend:
             privkey_path=str(cert_dir / "privkey.pem"),
             chain_path=str(cert_dir / "chain.pem"),
             fullchain_path=str(cert_dir / "fullchain.pem"),
-            expires_at=dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=90),
+            expires_at=dt.datetime.now(dt.UTC) + dt.timedelta(days=90),
         )

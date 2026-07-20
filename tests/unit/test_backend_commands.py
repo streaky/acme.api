@@ -69,19 +69,14 @@ def has_flag_pair(call_args: tuple[str, ...], flag: str, value: str) -> bool:
     acme.sh's argument parser only understands space-separated flag/value
     pairs, so command construction must emit them as adjacent argv tokens.
     """
-    return any(
-        call_args[index] == flag and call_args[index + 1] == value
-        for index in range(len(call_args) - 1)
-    )
+    return any(call_args[index] == flag and call_args[index + 1] == value for index in range(len(call_args) - 1))
 
 
 class TestRegisterAccountCommand:
     """Verify the register command is constructed correctly."""
 
     @pytest.mark.anyio
-    async def test_register_account_basic(
-        self, backend: AcmeShBackend, tmp_path: pathlib.Path
-    ) -> None:
+    async def test_register_account_basic(self, backend: AcmeShBackend, tmp_path: pathlib.Path) -> None:
         with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_run:
             mock_run.return_value = successful_process()
             acct_key = tmp_path / "acmesh" / "acct.key"
@@ -98,9 +93,7 @@ class TestRegisterAccountCommand:
         assert str(tmp_path / "acmesh") in call_args
         assert "--register" in call_args
         assert has_flag_pair(call_args, "--email", "admin@example.com")
-        assert has_flag_pair(
-            call_args, "--server", "https://acme-staging-v02.api.letsencrypt.org/directory"
-        )
+        assert has_flag_pair(call_args, "--server", "https://acme-staging-v02.api.letsencrypt.org/directory")
         assert "--nocaptcha" in call_args
         assert "--accountkey-file" in call_args
         assert str(acct_key) in call_args
@@ -141,9 +134,10 @@ class TestIssueCertificateDns01:
         env_file = tmp_path / "cloudflare.env"
         env_file.write_text("export CF_Token='secret token'\n", encoding="utf-8")
 
-        with patch.dict(os.environ, {}, clear=False), patch(
-            "asyncio.create_subprocess_exec", new_callable=AsyncMock
-        ) as mock_run:
+        with (
+            patch.dict(os.environ, {}, clear=False),
+            patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_run,
+        ):
             mock_run.return_value = successful_process()
 
             await backend.issue_certificate(
@@ -285,9 +279,7 @@ class TestParsing:
     @pytest.mark.anyio
     async def test_read_cert_notafter_rejects_bad_openssl_results(self) -> None:
         for proc in (failed_process("bad certificate"), successful_process("notAfter")):
-            with patch(
-                "asyncio.create_subprocess_exec", new_callable=AsyncMock, return_value=proc
-            ):
+            with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock, return_value=proc):
                 with pytest.raises(TerminalAcmeShError):
                     await read_cert_notafter("/acmesh/cert.pem")
 
@@ -307,9 +299,7 @@ class TestParsing:
             "CF_Account_ID": "abc123",
         }
 
-    def test_load_env_vars_ignores_blocked_and_invalid_names(
-        self, tmp_path: pathlib.Path
-    ) -> None:
+    def test_load_env_vars_ignores_blocked_and_invalid_names(self, tmp_path: pathlib.Path) -> None:
         env_file = tmp_path / "dns.env"
         env_file.write_text(
             "PATH=/tmp/evil\nCF_API_TOKEN=token\nINVALID-KEY=value\n",

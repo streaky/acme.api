@@ -85,9 +85,7 @@ class CertificateLifecycleService:
                 await session.flush()
             except IntegrityError as exc:
                 await session.rollback()
-                raise CertificateConflictError(
-                    "Certificate name already exists."
-                ) from exc
+                raise CertificateConflictError("Certificate name already exists.") from exc
 
             await self._record_event(
                 session,
@@ -133,9 +131,7 @@ class CertificateLifecycleService:
                         permissions_key=self._settings.deployment.permissions_key,
                         issuer=certificate.acme_account_ref,
                         allowed_source_roots=(
-                            [self._settings.acme.home_dir]
-                            if isinstance(self._backend, AcmeShBackend)
-                            else None
+                            [self._settings.acme.home_dir] if isinstance(self._backend, AcmeShBackend) else None
                         ),
                     ),
                 )

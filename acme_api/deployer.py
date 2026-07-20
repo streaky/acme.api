@@ -8,7 +8,7 @@ import os
 import shutil
 import stat
 import tempfile
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -49,11 +49,11 @@ class DeploymentMetadata:
         """Return a JSON-serializable metadata dictionary."""
         expires_at = self.expires_at
         if expires_at.tzinfo is None:
-            expires_at = expires_at.replace(tzinfo=timezone.utc)
+            expires_at = expires_at.replace(tzinfo=UTC)
         return {
             "primary_domain": self.primary_domain,
             "domains": self.domains,
-            "expires_at": expires_at.astimezone(timezone.utc).isoformat(),
+            "expires_at": expires_at.astimezone(UTC).isoformat(),
             "issuer": self.issuer,
             "source_paths": {
                 "cert": self.source_cert_path,
@@ -251,15 +251,9 @@ def _validate_source_files(
 ) -> None:
     """Ensure all source artifact paths are safe regular files."""
     normalized_roots = [root.resolve() for root in (allowed_source_roots or [])]
-    missing = [
-        f"{name}: {path}"
-        for name, path in source_paths.items()
-        if not path.is_file()
-    ]
+    missing = [f"{name}: {path}" for name, path in source_paths.items() if not path.is_file()]
     if missing:
-        raise DeploymentError(
-            "missing certificate source artifact(s): " + ", ".join(missing)
-        )
+        raise DeploymentError("missing certificate source artifact(s): " + ", ".join(missing))
 
     unsafe: list[str] = []
     for name, path in source_paths.items():

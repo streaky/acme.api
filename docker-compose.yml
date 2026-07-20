@@ -9,7 +9,7 @@ services:
       ACME_API_HOST: 0.0.0.0
       ACME_API_PORT: "8080"
     ports:
-      - 8080:8080
+      - 11980:8080
     volumes:
       - ./docker/config.yaml:/config/config.yaml:ro
       - acme-api-data:/data

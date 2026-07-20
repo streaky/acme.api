@@ -98,8 +98,6 @@ class ForbiddenError(AuthenticationError):
         required_role: The minimum role needed for this operation (may be ``None``).
     """
 
-    def __init__(
-        self, message: str, required_role: APIKeyRole | None = None
-    ) -> None:
+    def __init__(self, message: str, required_role: APIKeyRole | None = None) -> None:
         super().__init__(message, status_code=403)
         self.required_role = required_role

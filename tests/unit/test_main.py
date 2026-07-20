@@ -54,9 +54,7 @@ class TestCreateApp:
         assert resp.json()["checks"]["database"]["ok"] is True
         assert resp.json()["checks"]["acme_binary"]["ok"] is True
 
-    def test_ready_endpoint_reports_missing_acme_binary(
-        self, settings: AppSettings, tmp_path: Path
-    ) -> None:
+    def test_ready_endpoint_reports_missing_acme_binary(self, settings: AppSettings, tmp_path: Path) -> None:
         settings.acme.binary_path = str(tmp_path / "missing-acme.sh")
         app = create_app(settings=settings)
 
@@ -68,9 +66,7 @@ class TestCreateApp:
         assert resp.json()["checks"]["database"]["ok"] is True
         assert resp.json()["checks"]["acme_binary"]["ok"] is False
 
-    def test_openapi_documents_health_and_certificate_errors(
-        self, settings: AppSettings
-    ) -> None:
+    def test_openapi_documents_health_and_certificate_errors(self, settings: AppSettings) -> None:
         app = create_app(settings=settings)
 
         with TestClient(app) as client:

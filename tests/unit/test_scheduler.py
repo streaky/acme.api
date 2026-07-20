@@ -56,15 +56,13 @@ class RecordingBackend:
             domains=domains,
         )
 
-    async def renew_certificate(
-        self, domains: list[str], force_renewal: bool = False
-    ) -> IssuanceResult:
+    async def renew_certificate(self, domains: list[str], force_renewal: bool = False) -> IssuanceResult:
         """Return a successful renewal or raise the configured error."""
         del force_renewal
         self.calls += 1
         if self.error is not None:
             raise self.error
-        expires_at = dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=90)
+        expires_at = dt.datetime.now(dt.UTC) + dt.timedelta(days=90)
         return IssuanceResult(
             account_key_path="/acmesh/acct.key",
             cert=_cert_expiry(expires_at),
@@ -90,15 +88,14 @@ def _cert_expiry(expires_at: dt.datetime | None = None) -> CertExpiry:
         privkey_path="/acmesh/privkey.pem",
         chain_path="/acmesh/chain.pem",
         fullchain_path="/acmesh/fullchain.pem",
-        expires_at=expires_at
-        or dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=90),
+        expires_at=expires_at or dt.datetime.now(dt.UTC) + dt.timedelta(days=90),
     )
 
 
 @pytest.fixture()
 async def session_factory(
     tmp_path: Path,
-) -> AsyncGenerator[async_sessionmaker[AsyncSession], None]:
+) -> AsyncGenerator[async_sessionmaker[AsyncSession]]:
     settings = AppSettings(
         database=DatabaseConfig(url=f"sqlite+aiosqlite:///{tmp_path}/test.db"),
         deployment=DeploymentConfig(directory=tmp_path),
@@ -122,7 +119,7 @@ async def _create_certificate(
             domains=["example.com"],
             acme_account_ref="le",
             dns_provider_ref="cf",
-            expiry_date=expiry or dt.datetime.now(dt.timezone.utc),
+            expiry_date=expiry or dt.datetime.now(dt.UTC),
             status=CertificateStatus.VALID,
         )
         session.add(certificate)
@@ -133,18 +130,18 @@ async def _create_certificate(
 
 def test_next_renewal_run_time_uses_window() -> None:
     """Renewal is scheduled at expiry minus configured window."""
-    now = dt.datetime(2026, 1, 1, tzinfo=dt.timezone.utc)
-    expiry = dt.datetime(2026, 3, 1, tzinfo=dt.timezone.utc)
+    now = dt.datetime(2026, 1, 1, tzinfo=dt.UTC)
+    expiry = dt.datetime(2026, 3, 1, tzinfo=dt.UTC)
 
     run_at = next_renewal_run_time(expiry, 30, now_factory=lambda: now)
 
-    assert run_at == dt.datetime(2026, 1, 30, tzinfo=dt.timezone.utc)
+    assert run_at == dt.datetime(2026, 1, 30, tzinfo=dt.UTC)
 
 
 def test_next_renewal_run_time_is_immediate_inside_window() -> None:
     """Certs already inside the renewal window run immediately."""
-    now = dt.datetime(2026, 1, 20, tzinfo=dt.timezone.utc)
-    expiry = dt.datetime(2026, 2, 1, tzinfo=dt.timezone.utc)
+    now = dt.datetime(2026, 1, 20, tzinfo=dt.UTC)
+    expiry = dt.datetime(2026, 2, 1, tzinfo=dt.UTC)
 
     run_at = next_renewal_run_time(expiry, 30, now_factory=lambda: now)
 
@@ -157,7 +154,7 @@ async def test_rebuild_jobs_schedules_valid_certificates(
 ) -> None:
     """Startup reconstruction creates one APScheduler job per valid cert."""
     certificate = await _create_certificate(session_factory)
-    scheduler = AsyncIOScheduler(timezone=dt.timezone.utc)
+    scheduler = AsyncIOScheduler(timezone=dt.UTC)
     renewal_scheduler = RenewalScheduler(
         session_factory=session_factory,
         backend=RecordingBackend(),
@@ -178,13 +175,13 @@ async def test_rebuild_jobs_records_expiring_event_once(
     """Startup reconstruction emits one expiring event inside the renewal window."""
     await _create_certificate(
         session_factory,
-        expiry=dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=5),
+        expiry=dt.datetime.now(dt.UTC) + dt.timedelta(days=5),
     )
     renewal_scheduler = RenewalScheduler(
         session_factory=session_factory,
         backend=RecordingBackend(),
         config=RenewalConfig(window_days=30),
-        scheduler=AsyncIOScheduler(timezone=dt.timezone.utc),
+        scheduler=AsyncIOScheduler(timezone=dt.UTC),
     )
 
     assert await renewal_scheduler.rebuild_jobs() == 1
@@ -192,10 +189,8 @@ async def test_rebuild_jobs_records_expiring_event_once(
 
     async with session_factory() as session:
         events = (
-            await session.execute(
-                select(Event).where(Event.event_type == "certificate.expiring")
-            )
-        ).scalars().all()
+            (await session.execute(select(Event).where(Event.event_type == "certificate.expiring"))).scalars().all()
+        )
 
     assert len(events) == 1
 
@@ -211,19 +206,15 @@ async def test_successful_renewal_updates_status_and_records_attempt(
         session_factory=session_factory,
         backend=backend,
         config=RenewalConfig(),
-        scheduler=AsyncIOScheduler(timezone=dt.timezone.utc),
+        scheduler=AsyncIOScheduler(timezone=dt.UTC),
     )
 
     await renewal_scheduler.renew_certificate(certificate.id)
 
     async with session_factory() as session:
         refreshed = await session.get(Certificate, certificate.id)
-        attempts = (
-            await session.execute(select(RenewalAttempt))
-        ).scalars().all()
-        events = (
-            await session.execute(select(Event).where(Event.event_type == "certificate.renewed"))
-        ).scalars().all()
+        attempts = (await session.execute(select(RenewalAttempt))).scalars().all()
+        events = (await session.execute(select(Event).where(Event.event_type == "certificate.renewed"))).scalars().all()
 
     assert backend.calls == 1
     assert refreshed is not None
@@ -242,7 +233,7 @@ async def test_transient_failure_records_retry(
     certificate = await _create_certificate(session_factory)
     backend = RecordingBackend()
     backend.error = TransientAcmeShError("dns not ready")
-    scheduler = AsyncIOScheduler(timezone=dt.timezone.utc)
+    scheduler = AsyncIOScheduler(timezone=dt.UTC)
     renewal_scheduler = RenewalScheduler(
         session_factory=session_factory,
         backend=backend,
@@ -272,7 +263,7 @@ async def test_terminal_failure_marks_certificate_failed(
     certificate = await _create_certificate(session_factory)
     backend = RecordingBackend()
     backend.error = TerminalAcmeShError("account invalid")
-    scheduler = AsyncIOScheduler(timezone=dt.timezone.utc)
+    scheduler = AsyncIOScheduler(timezone=dt.UTC)
     renewal_scheduler = RenewalScheduler(
         session_factory=session_factory,
         backend=backend,

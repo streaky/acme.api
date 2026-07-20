@@ -48,19 +48,13 @@ class CertificateCreate(BaseModel):
     @classmethod
     def _validate_domains(cls, v: list[str]) -> list[str]:
         """Each domain must be a valid DNS name or wildcard."""
-        pattern = re.compile(
-            r"^(?:\*\.)?([a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$"
-        )
+        pattern = re.compile(r"^(?:\*\.)?([a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$")
         for domain in v:
             if not pattern.match(domain):
-                raise ValueError(
-                    f"Domain {domain!r} does not match a valid DNS label pattern."
-                )
+                raise ValueError(f"Domain {domain!r} does not match a valid DNS label pattern.")
             normalized = domain[2:] if domain.startswith("*.") else domain
             if len(normalized) > _MAX_FQDN_LENGTH:
-                raise ValueError(
-                    f"Domain {domain!r} exceeds maximum length of {_MAX_FQDN_LENGTH} characters."
-                )
+                raise ValueError(f"Domain {domain!r} exceeds maximum length of {_MAX_FQDN_LENGTH} characters.")
         return v
 
 

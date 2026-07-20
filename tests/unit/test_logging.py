@@ -5,26 +5,29 @@ from __future__ import annotations
 import json
 import logging
 import sys
-from typing import Generator
+from collections.abc import Generator
 
 import pytest
 
 from acme_api.logging import (
     JSONFormatter,
     get_request_id,
-)
-from acme_api.logging import request_id as _request_id_ctxvar
-from acme_api.logging import (
     setup_logging,
 )
+from acme_api.logging import request_id as _request_id_ctxvar
 
 
 class TestJSONFormatter:
     def test_formats_basic_record(self) -> None:
         fmt = JSONFormatter()
         record = logging.LogRecord(
-            name="test", level=logging.INFO, pathname="", lineno=1,
-            msg="hello world", args=(), exc_info=None,
+            name="test",
+            level=logging.INFO,
+            pathname="",
+            lineno=1,
+            msg="hello world",
+            args=(),
+            exc_info=None,
         )
         output = fmt.format(record)
         data = json.loads(output)
@@ -37,8 +40,13 @@ class TestJSONFormatter:
         try:
             fmt = JSONFormatter()
             record = logging.LogRecord(
-                name="test", level=logging.INFO, pathname="", lineno=1,
-                msg="hello", args=(), exc_info=None,
+                name="test",
+                level=logging.INFO,
+                pathname="",
+                lineno=1,
+                msg="hello",
+                args=(),
+                exc_info=None,
             )
             data = json.loads(fmt.format(record))
             assert data["request_id"] == "abc-123"
@@ -50,8 +58,13 @@ class TestJSONFormatter:
         try:
             fmt = JSONFormatter()
             record = logging.LogRecord(
-                name="test", level=logging.INFO, pathname="", lineno=1,
-                msg="hello", args=(), exc_info=None,
+                name="test",
+                level=logging.INFO,
+                pathname="",
+                lineno=1,
+                msg="hello",
+                args=(),
+                exc_info=None,
             )
             data = json.loads(fmt.format(record))
             assert data["request_id"] is None
@@ -61,10 +74,15 @@ class TestJSONFormatter:
     def test_includes_extra_data(self) -> None:
         fmt = JSONFormatter()
         record = logging.LogRecord(
-            name="test", level=logging.INFO, pathname="", lineno=1,
-            msg="hello", args=(), exc_info=None,
+            name="test",
+            level=logging.INFO,
+            pathname="",
+            lineno=1,
+            msg="hello",
+            args=(),
+            exc_info=None,
         )
-        record.extra = {"user": "admin", "action": "login"}  # noqa: B027
+        record.extra = {"user": "admin", "action": "login"}
         data = json.loads(fmt.format(record))
         assert data["user"] == "admin"
         assert data["action"] == "login"
@@ -72,8 +90,13 @@ class TestJSONFormatter:
     def test_includes_standard_logging_extra_fields(self) -> None:
         fmt = JSONFormatter()
         record = logging.LogRecord(
-            name="test", level=logging.INFO, pathname="", lineno=1,
-            msg="hello", args=(), exc_info=None,
+            name="test",
+            level=logging.INFO,
+            pathname="",
+            lineno=1,
+            msg="hello",
+            args=(),
+            exc_info=None,
         )
         record.cert_id = "cert-123"
 
@@ -85,8 +108,12 @@ class TestJSONFormatter:
         fmt = JSONFormatter()
         exc = ValueError("oops")
         record = logging.LogRecord(
-            name="test", level=logging.ERROR, pathname="", lineno=1,
-            msg="error happened", args=(),
+            name="test",
+            level=logging.ERROR,
+            pathname="",
+            lineno=1,
+            msg="error happened",
+            args=(),
             exc_info=(exc.__class__, exc, None),
         )
 

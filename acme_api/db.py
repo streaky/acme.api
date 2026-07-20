@@ -20,13 +20,11 @@ from acme_api.models.base import Base
 # ---------------------------------------------------------------------------
 # Module-level handles populated by init_engine()
 # ---------------------------------------------------------------------------
-_SESSION_FACTORY: typing.Optional[async_sessionmaker[AsyncSession]] = None
-_ENGINE: typing.Optional[AsyncEngine] = None
+_SESSION_FACTORY: async_sessionmaker[AsyncSession] | None = None
+_ENGINE: AsyncEngine | None = None
 
 
-def _set_sqlite_pragma(
-    dbapi_conn: typing.Any, _connection_record: typing.Any
-) -> None:
+def _set_sqlite_pragma(dbapi_conn: typing.Any, _connection_record: typing.Any) -> None:
     """Apply SQLite pragmas on each new aiosqlite connection."""
     cursor = dbapi_conn.cursor()
     try:
@@ -109,8 +107,9 @@ async def init_db(engine: AsyncEngine) -> None:
 
 def run_migrations(settings: AppSettings) -> None:
     """Run Alembic migrations to the latest revision."""
-    from alembic import command
     from alembic.config import Config
+
+    from alembic import command
 
     source_root = Path(__file__).resolve().parent.parent
     project_root = next(

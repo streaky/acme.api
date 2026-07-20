@@ -31,9 +31,7 @@ from acme_api.services.certificates import (
 
 router = APIRouter(prefix="/v1/certificates", tags=["Certificates"])
 
-_NOT_FOUND_RESPONSE: dict[int | str, dict[str, Any]] = {
-    404: {"description": "Certificate not found."}
-}
+_NOT_FOUND_RESPONSE: dict[int | str, dict[str, Any]] = {404: {"description": "Certificate not found."}}
 
 
 @router.post(

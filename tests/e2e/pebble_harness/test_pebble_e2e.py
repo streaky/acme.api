@@ -6,7 +6,7 @@ Pebble (TXT records published to challtestsrv), then verify the certificate
 reaches ``valid`` and its artifacts are atomically deployed on disk.
 
 This module only runs when ``run_harness.py`` has brought the compose stack
-up and set ``PEBBLE_HARNESS=1``; under a plain ``make test`` it is skipped.
+up and set ``PEBBLE_HARNESS=1``; under normal test gates it is skipped.
 """
 
 from __future__ import annotations
@@ -27,11 +27,9 @@ pytestmark = pytest.mark.skipif(
 
 #: Must match ``api_keys.admin`` in acme.api.test-config.yaml.
 API_KEY = "pebble-harness-admin-key"
-API_PORT = int(os.environ.get("HARNESS_API_PORT", "8080"))
+API_PORT = int(os.environ.get("HARNESS_API_PORT", "11980"))
 BASE_URL = f"http://127.0.0.1:{API_PORT}"
-RUNTIME_DIR = Path(
-    os.environ.get("HARNESS_RUNTIME_DIR", "/tmp/acme-api-pebble-harness")
-)
+RUNTIME_DIR = Path(os.environ.get("HARNESS_RUNTIME_DIR", "/tmp/acme-api-pebble-harness"))
 
 #: Resolved by challtestsrv inside the compose network; never leaves it.
 TEST_DOMAIN = "harness-e2e.example.test"
@@ -70,10 +68,7 @@ def _poll_until_terminal(client: httpx2.Client, certificate_id: str) -> dict[str
         if body["status"] in _TERMINAL_STATUSES:
             return body
         time.sleep(POLL_INTERVAL_SEC)
-    raise AssertionError(
-        f"Certificate {certificate_id} still {body.get('status')!r} "
-        f"after {ISSUANCE_TIMEOUT_SEC}s"
-    )
+    raise AssertionError(f"Certificate {certificate_id} still {body.get('status')!r} after {ISSUANCE_TIMEOUT_SEC}s")
 
 
 def test_dns_persist_workflow_issues_and_deploys_certificate() -> None:

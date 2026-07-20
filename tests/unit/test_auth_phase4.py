@@ -80,7 +80,7 @@ class TestAuthenticatedUser:
             hashed_key=hashed,
             role=APIKeyRole.ADMIN,
             is_active=True,
-            expires_at=_dt.datetime.now(_dt.timezone.utc) + _dt.timedelta(days=365),
+            expires_at=_dt.datetime.now(_dt.UTC) + _dt.timedelta(days=365),
         )
 
         user = AuthenticatedUser(
@@ -137,9 +137,7 @@ class TestBootstrapKeys:
             await engine.dispose()
 
     @pytest.mark.anyio
-    async def test_seed_initial_keys_backfills_lookup_hash(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_seed_initial_keys_backfills_lookup_hash(self, tmp_path: Path) -> None:
         """Existing bootstrap keys get a lookup hash when raw config is present."""
         settings = AppSettings(
             database=DatabaseConfig(url=f"sqlite+aiosqlite:///{tmp_path}/test.db"),
@@ -162,9 +160,7 @@ class TestBootstrapKeys:
                 await session.commit()
 
                 created = await seed_initial_keys(session, settings)
-                row = await session.scalar(
-                    select(APIKey).where(APIKey.name == "bootstrap-readonly")
-                )
+                row = await session.scalar(select(APIKey).where(APIKey.name == "bootstrap-readonly"))
 
             assert created == []
             assert row is not None
@@ -201,29 +197,33 @@ class TestRBACRoutes:
             readonly_headers = {"Authorization": "Bearer readonly-key-12345"}
             operator_headers = {"Authorization": "Bearer operator-key-12345"}
 
-            assert client.get(
-                "/v1/certificates", headers=readonly_headers
-            ).status_code == 200
-            assert client.post(
-                "/v1/certificates",
-                headers=readonly_headers,
-                json={
-                    "name": "example",
-                    "domains": ["example.com"],
-                    "acme_account_ref": "le",
-                    "dns_provider_ref": "cf",
-                },
-            ).status_code == 403
-            assert client.post(
-                "/v1/certificates",
-                headers=operator_headers,
-                json={
-                    "name": "example",
-                    "domains": ["example.com"],
-                    "acme_account_ref": "le",
-                    "dns_provider_ref": "cf",
-                },
-            ).status_code == 202
+            assert client.get("/v1/certificates", headers=readonly_headers).status_code == 200
+            assert (
+                client.post(
+                    "/v1/certificates",
+                    headers=readonly_headers,
+                    json={
+                        "name": "example",
+                        "domains": ["example.com"],
+                        "acme_account_ref": "le",
+                        "dns_provider_ref": "cf",
+                    },
+                ).status_code
+                == 403
+            )
+            assert (
+                client.post(
+                    "/v1/certificates",
+                    headers=operator_headers,
+                    json={
+                        "name": "example",
+                        "domains": ["example.com"],
+                        "acme_account_ref": "le",
+                        "dns_provider_ref": "cf",
+                    },
+                ).status_code
+                == 202
+            )
 
     def test_auth_verifies_only_lookup_candidate(
         self,

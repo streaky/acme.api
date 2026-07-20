@@ -57,7 +57,7 @@ WORKDIR /app
 COPY --chown=acmeapi:acmeapi alembic.ini ./
 COPY --chown=acmeapi:acmeapi alembic ./alembic
 
-EXPOSE 8080
+#EXPOSE 8080
 VOLUME ["/config", "/data", "/certificates", "/acmesh"]
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \

@@ -29,10 +29,7 @@ async def list_acme_accounts(
     settings: AppSettings = Depends(get_settings),
 ) -> list[AcmeAccountRead]:
     """Return configured ACME account aliases."""
-    return [
-        AcmeAccountRead(name=account.name, server_url=account.server_url)
-        for account in settings.acme_accounts
-    ]
+    return [AcmeAccountRead(name=account.name, server_url=account.server_url) for account in settings.acme_accounts]
 
 
 @router.get(
@@ -47,6 +44,5 @@ async def list_dns_providers(
 ) -> list[DnsProviderRead]:
     """Return configured DNS provider aliases."""
     return [
-        DnsProviderRead(name=provider.name, provider_name=provider.provider_name)
-        for provider in settings.dns_providers
+        DnsProviderRead(name=provider.name, provider_name=provider.provider_name) for provider in settings.dns_providers
     ]

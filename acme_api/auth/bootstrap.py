@@ -33,8 +33,7 @@ async def seed_initial_keys(db: AsyncSession, settings: AppSettings) -> list[API
             role = APIKeyRole(role_str)
         except ValueError as exc:
             raise ValueError(
-                f"Invalid bootstrap key role '{role_str}'. "
-                f"Valid roles: {[r.value for r in APIKeyRole]}"
+                f"Invalid bootstrap key role '{role_str}'. Valid roles: {[r.value for r in APIKeyRole]}"
             ) from exc
 
         existing = await db.scalar(

@@ -4,9 +4,9 @@ services:
     command: -config test/config/pebble-config.json -strict -dnsserver pebble-challtestsrv:8053
     environment:
       # Skip Pebble's random validation sleeps so the harness stays fast.
-      PEBBLE_VA_NOSLEEP: "1"
+      PEBBLE_VA_NOSLEEP: 1
     volumes:
-      - ./tests/integration/pebble_harness/pebble-config.json:/test/config/pebble-config.json:ro
+      - ./tests/e2e/pebble_harness/pebble-config.json:/test/config/pebble-config.json:ro
     depends_on:
       - pebble-challtestsrv
 
@@ -21,16 +21,16 @@ services:
     image: "acme-api:test-pool"
     environment:
       ACME_API_CONFIG: /config/acme.api.test-config.yaml
-      ACME_API_PORT: "8080"
+      ACME_API_PORT: 11980
       # Pebble serves its ACME directory over HTTPS with a self-signed test
       # certificate; acme.sh honors this env var and skips TLS verification.
       HTTPS_INSECURE: "1"
     ports:
-      - "127.0.0.1:${HARNESS_API_PORT:-8080}:8080"
+      - 127.0.0.1:${HARNESS_API_PORT:-11980}:11980
     volumes:
-      - ./tests/integration/pebble_harness/acme.api.test-config.yaml:/config/acme.api.test-config.yaml:ro
-      - ./tests/integration/pebble_harness/challtestsrv.env:/fixtures/challtestsrv.env:ro
-      - ./tests/integration/pebble_harness/dns_challtestsrv.sh:/opt/acme.sh/dnsapi/dns_challtestsrv.sh:ro
+      - ./tests/e2e/pebble_harness/acme.api.test-config.yaml:/config/acme.api.test-config.yaml:ro
+      - ./tests/e2e/pebble_harness/challtestsrv.env:/fixtures/challtestsrv.env:ro
+      - ./tests/e2e/pebble_harness/dns_challtestsrv.sh:/opt/acme.sh/dnsapi/dns_challtestsrv.sh:ro
       - ${HARNESS_RUNTIME_DIR:-/tmp/acme-api-pebble-harness}:/tmp/acme-api-pebble-harness
     depends_on:
       - pebble

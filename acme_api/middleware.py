@@ -7,7 +7,8 @@ which is then logged by the structured JSON formatter.
 from __future__ import annotations
 
 import re
-from typing import Any, Callable, cast
+from collections.abc import Callable
+from typing import Any, cast
 from uuid import uuid4
 
 from acme_api.logging import request_id as _request_id_ctxvar
@@ -33,7 +34,7 @@ class RequestIdMiddleware:
         scope: dict[str, Any],
         receive: Callable[..., Any],
         send: Callable[[dict[str, Any]], Any],
-    ) -> None:  # noqa: ANN401
+    ) -> None:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
@@ -76,10 +77,6 @@ class RequestIdMiddleware:
         for key, value in headers:
             if key.lower() == b"x-request-id":
                 decoded = value.decode("latin-1").strip()
-                if (
-                    decoded
-                    and len(decoded) <= _MAX_REQUEST_ID_LENGTH
-                    and _REQUEST_ID_PATTERN.fullmatch(decoded)
-                ):
+                if decoded and len(decoded) <= _MAX_REQUEST_ID_LENGTH and _REQUEST_ID_PATTERN.fullmatch(decoded):
                     return decoded
         return str(uuid4())

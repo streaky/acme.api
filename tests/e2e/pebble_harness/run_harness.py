@@ -18,12 +18,10 @@ PEBBLE_DIRECTORY_URL = "https://pebble:14000/dir"
 PEBBLE_POLL_SERVICE = "acme-api-test"
 CONTAINER_PYTHON = "python"
 TEST_CONFIG = HARNESS_DIR / "acme.api.test-config.yaml"
-TEST_TARGET = "tests/integration/pebble_harness/test_pebble_e2e.py"
-RUNTIME_DIR = Path(
-    os.environ.get("HARNESS_RUNTIME_DIR", f"/tmp/acme-api-pebble-harness-{os.getuid()}")
-)
+TEST_TARGET = "tests/e2e/pebble_harness/test_pebble_e2e.py"
+RUNTIME_DIR = Path(os.environ.get("HARNESS_RUNTIME_DIR", f"/tmp/acme-api-pebble-harness-{os.getuid()}"))
 RUNTIME_SUBDIRS = ("data", "certificates", "acmesh")
-API_PORT = os.environ.get("HARNESS_API_PORT", "8080")
+API_PORT = os.environ.get("HARNESS_API_PORT", "11980")
 
 MAX_POLL_ATTEMPTS = 8
 POLL_INTERVAL_SEC = 3.0
@@ -112,16 +110,10 @@ def _health_poll() -> None:
         if _poll_pebble_from_compose_network():
             print(f"Pebble ready on attempt {attempt}.")
             return
-        print(
-            f"Poll #{attempt}: Pebble not ready. "
-            f"Retrying after {POLL_INTERVAL_SEC}s..."
-        )
+        print(f"Poll #{attempt}: Pebble not ready. Retrying after {POLL_INTERVAL_SEC}s...")
         time.sleep(POLL_INTERVAL_SEC)
 
-    raise TimeoutError(
-        f"Timed out waiting for {PEBBLE_DIRECTORY_URL} after "
-        f"{MAX_POLL_ATTEMPTS} attempts."
-    )
+    raise TimeoutError(f"Timed out waiting for {PEBBLE_DIRECTORY_URL} after {MAX_POLL_ATTEMPTS} attempts.")
 
 
 def _teardown() -> None:

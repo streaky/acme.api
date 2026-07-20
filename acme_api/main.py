@@ -9,9 +9,10 @@ from __future__ import annotations
 import logging
 import os
 import time
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, AsyncGenerator
+from typing import Any
 
 import uvicorn
 from fastapi import FastAPI, Request, Response
@@ -65,9 +66,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     async with get_db() as session:
         created_keys = await seed_initial_keys(session, settings)
         for key in created_keys:
-            root_logger.info(
-                "seeded api key | name=%s role=%s", key.name, key.role.value
-            )
+            root_logger.info("seeded api key | name=%s role=%s", key.name, key.role.value)
 
     backend = getattr(app.state, "acme_backend", None) or AcmeShBackend(
         _AcmeShBackendConfig(
@@ -89,6 +88,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
                 backoff_seconds=settings.webhooks.backoff_seconds,
             ),
         )
+
     renewal_scheduler = RenewalScheduler(
         session_factory=get_session_factory(),
         backend=backend,
@@ -98,11 +98,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
             root=settings.deployment.directory,
             permissions_cert=settings.deployment.permissions_cert,
             permissions_key=settings.deployment.permissions_key,
-            allowed_source_roots=(
-                [settings.acme.home_dir]
-                if isinstance(backend, AcmeShBackend)
-                else None
-            ),
+            allowed_source_roots=([settings.acme.home_dir] if isinstance(backend, AcmeShBackend) else None),
         ),
     )
     app.state.renewal_scheduler = renewal_scheduler
@@ -138,10 +134,7 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
 
     app = FastAPI(
         title="acme.api",
-        description=(
-            "Lightweight, self-hosted REST service for managing ACME certificates "
-            "via DNS-01 validation."
-        ),
+        description=("Lightweight, self-hosted REST service for managing ACME certificates via DNS-01 validation."),
         version="0.1.0",
         lifespan=lifespan,
         responses=_COMMON_OPENAPI_RESPONSES,
@@ -189,9 +182,7 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
         )
 
     @app.exception_handler(Exception)
-    async def unhandled_exception_handler(
-        request: Request, _exc: Exception
-    ) -> Response:
+    async def unhandled_exception_handler(request: Request, _exc: Exception) -> Response:
         logging.exception("unhandled exception on %s", request.url.path)
         return JSONResponse(status_code=500, content={"detail": "internal server error"})
 

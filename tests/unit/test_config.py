@@ -226,11 +226,13 @@ class TestAppSettingsValidate:
             acme=AcmeConfig(home_dir=tmp_path / "acmesh"),
             dns_providers=[
                 DnsProviderConfig(
-                    name="dup", provider_name="cf",
+                    name="dup",
+                    provider_name="cf",
                     env_vars_file_path=tmp_path / "a.env",
                 ),
                 DnsProviderConfig(
-                    name="dup", provider_name="route53",
+                    name="dup",
+                    provider_name="route53",
                     env_vars_file_path=tmp_path / "b.env",
                 ),
             ],
@@ -270,7 +272,8 @@ class TestAppSettingsValidate:
             acme=AcmeConfig(home_dir=tmp_path / "acmesh"),
             dns_providers=[
                 DnsProviderConfig(
-                    name="prod", provider_name="cf",
+                    name="prod",
+                    provider_name="cf",
                     env_vars_file_path=tmp_path / "missing.env",
                 ),
             ],
