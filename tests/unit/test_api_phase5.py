@@ -230,7 +230,7 @@ def test_wildcard_dns_persist_uses_base_domain_policy(tmp_path: Path) -> None:
     assert backend.persist_value_requests == [("example.com", True)]
     assert response.json()["challenge"]["record_name"] == "_validation-persist.example.com"
 
-    assert response.json()["deployment_directory"] == "wildcard.example.com"
+    assert response.json()["deployment_directory"] == "@wildcard@.example.com"
 
 
 def test_dns_persist_dns_failure_can_be_authorized_again(tmp_path: Path) -> None:

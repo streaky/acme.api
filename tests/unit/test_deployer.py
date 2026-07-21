@@ -99,7 +99,30 @@ def test_wildcard_primary_domain_uses_safe_directory_name(tmp_path: pathlib.Path
         deployment_root=tmp_path / "certificates",
     )
 
-    assert deployed.directory.name == "wildcard.example.com"
+    assert deployed.directory.name == "@wildcard@.example.com"
+
+
+def test_wildcard_and_matching_literal_use_distinct_directories(tmp_path: pathlib.Path) -> None:
+    """A wildcard certificate cannot overwrite its matching literal certificate."""
+    cert = _write_sources(tmp_path)
+    deployment_root = tmp_path / "certificates"
+
+    literal = deploy_certificate_artifacts(
+        cert=cert,
+        domains=["wildcard.example.com"],
+        deployment_root=deployment_root,
+    )
+    wildcard = deploy_certificate_artifacts(
+        cert=cert,
+        domains=["*.example.com"],
+        deployment_root=deployment_root,
+    )
+
+    assert literal.directory.name == "wildcard.example.com"
+    assert wildcard.directory.name == "@wildcard@.example.com"
+    assert literal.directory != wildcard.directory
+    assert literal.cert_path.is_file()
+    assert wildcard.cert_path.is_file()
 
 
 def test_missing_source_file_raises(tmp_path: pathlib.Path) -> None:

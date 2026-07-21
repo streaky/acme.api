@@ -237,15 +237,16 @@ def _primary_domain(domains: list[str]) -> str:
 
 
 def deployment_directory_name(primary_domain: str) -> str:
-    """Return the stable deployment directory name for a primary domain.
+    """Return the collision-free deployment directory for a primary domain.
 
-    Wildcard labels are converted to a filesystem-safe ``wildcard.`` prefix.
+    Wildcards use an ``@wildcard@.`` prefix. ``@`` is not valid in a certificate
+    DNS name, making the mapping distinct from every non-wildcard identifier.
     The returned value is relative to the configured deployment root.
     """
     if "/" in primary_domain or "\\" in primary_domain or primary_domain in {"", ".", ".."}:
         raise DeploymentError(f"unsafe primary domain for deployment: {primary_domain!r}")
     if primary_domain.startswith("*."):
-        return f"wildcard.{primary_domain[2:]}"
+        return f"@wildcard@.{primary_domain[2:]}"
     return primary_domain
 
 

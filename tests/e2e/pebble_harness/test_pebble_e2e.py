@@ -151,7 +151,7 @@ def test_dns_persist_workflow_issues_and_deploys_certificate() -> None:
             assert events.status_code == 200, events.text
             raise AssertionError(f"DNS Persist issuance failed: {final}; events: {events.json()}")
 
-    deploy_dir = RUNTIME_DIR / "certificates" / f"wildcard.{PERSIST_BASE_DOMAIN}"
+    deploy_dir = RUNTIME_DIR / "certificates" / f"@wildcard@.{PERSIST_BASE_DOMAIN}"
     assert final["status"] == "valid"
     assert final["expiry_date"] is not None
     assert final["challenge"] == challenge

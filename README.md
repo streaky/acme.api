@@ -139,11 +139,12 @@ deployment root. For ordinary certificates it is the first requested domain:
     metadata.json
 ```
 
-Wildcard domains use a portable filesystem-safe name: a request for
-`*.example.com` reports `deployment_directory: "wildcard.example.com"` and deploys
-under `/certificates/wildcard.example.com/`. Clients consuming the shared
-certificate volume should use this API field rather than deriving a directory name
-from the requested identifier.
+Wildcard domains use a portable collision-free name: a request for
+`*.example.com` reports `deployment_directory: "@wildcard@.example.com"` and
+deploys under `/certificates/@wildcard@.example.com/`. This cannot collide with a
+separate request for the valid literal name `wildcard.example.com`. Clients
+consuming the shared certificate volume must always resolve artifact paths from
+the API's `deployment_directory` field, never derive them from the requested identifier.
 
 Files are copied to temporary names, flushed, permissioned, and atomically renamed
 into place. Default permissions are `0644` for certificate files and `0600` for
