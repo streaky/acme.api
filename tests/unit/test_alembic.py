@@ -8,8 +8,24 @@ import sys
 from pathlib import Path
 
 from sqlalchemy import create_engine, text
+from sqlalchemy.engine import Connection
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+
+
+def _unique_index_columns(
+    connection: Connection,
+    table: str,
+    expected_columns: list[str],
+) -> list[str] | None:
+    """Return matching unique index columns, if the table declares them."""
+    for index in connection.execute(text(f"PRAGMA index_list({table})")):
+        if index[2] != 1:
+            continue
+        columns = [row[2] for row in connection.execute(text(f"PRAGMA index_info({index[1]})"))]
+        if columns == expected_columns:
+            return columns
+    return None
 
 
 class TestAlembicMigration:
@@ -85,6 +101,11 @@ datefmt = %H:%M:%S
                     row[0] for row in conn.execute(text("SELECT name FROM sqlite_master WHERE type='table'"))
                 }
                 column_types = {row[1]: row[2] for row in conn.execute(text("PRAGMA table_info(api_keys)"))}
+                identity_columns = _unique_index_columns(
+                    conn,
+                    "certificates",
+                    ["name", "acme_account_ref", "challenge_method"],
+                )
         finally:
             engine.dispose()
 
@@ -100,3 +121,4 @@ datefmt = %H:%M:%S
             f"Missing tables {expected_tables - table_names}; found {table_names}"
         )
         assert column_types["key_lookup_hash"] == "VARCHAR(128)"
+        assert identity_columns == ["name", "acme_account_ref", "challenge_method"]

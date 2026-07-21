@@ -28,6 +28,10 @@ def upgrade() -> None:
         batch_op.add_column(sa.Column("dns_record_type", sa.String(length=16), nullable=True))
         batch_op.add_column(sa.Column("dns_record_name", sa.String(length=255), nullable=True))
         batch_op.add_column(sa.Column("dns_record_value", sa.String(length=2048), nullable=True))
+        batch_op.create_unique_constraint(
+            "uq_certificates_request_identity",
+            ["name", "acme_account_ref", "challenge_method"],
+        )
         batch_op.create_index("ix_certificates_name", ["name"], unique=False)
 
     bind = op.get_bind()
@@ -39,6 +43,7 @@ def downgrade() -> None:
     """Remove DNS Persist state and restore the legacy certificate shape."""
     with op.batch_alter_table("certificates", schema=None) as batch_op:
         batch_op.drop_index("ix_certificates_name")
+        batch_op.drop_constraint("uq_certificates_request_identity", type_="unique")
         batch_op.drop_column("dns_record_value")
         batch_op.drop_column("dns_record_name")
         batch_op.drop_column("dns_record_type")

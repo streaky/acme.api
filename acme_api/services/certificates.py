@@ -76,17 +76,11 @@ class CertificateLifecycleService:
             raise CertificateLifecycleError("dns_provider_ref is required for dns-01 certificates.")
 
         async with self._session_factory() as session:
+            existing = await self._find_request(session, payload)
+            if existing is not None:
+                return self._resume_or_reject(existing, payload)
+
             if payload.challenge_method == "dns-persist":
-                existing = await session.scalar(
-                    select(Certificate).where(
-                        Certificate.name == payload.name,
-                        Certificate.domains == payload.domains,
-                        Certificate.acme_account_ref == payload.acme_account_ref,
-                        Certificate.challenge_method == "dns-persist",
-                    )
-                )
-                if existing is not None:
-                    return existing
                 primary_domain = payload.domains[0]
                 dns_persist_domain = primary_domain.removeprefix("*.")
                 dns_value = await self._backend.make_dns_persist_value(
@@ -107,9 +101,6 @@ class CertificateLifecycleService:
                     status=CertificateStatus.PENDING_DNS,
                 )
             else:
-                existing = await session.scalar(select(Certificate).where(Certificate.name == payload.name))
-                if existing is not None:
-                    raise CertificateConflictError("Certificate name already exists.")
                 certificate = Certificate(
                     name=payload.name,
                     domains=payload.domains,
@@ -124,6 +115,9 @@ class CertificateLifecycleService:
                 await session.flush()
             except IntegrityError as exc:
                 await session.rollback()
+                existing = await self._find_request(session, payload)
+                if existing is not None:
+                    return self._resume_or_reject(existing, payload)
                 raise CertificateConflictError("Certificate request already exists.") from exc
 
             await self._record_event(
@@ -136,6 +130,30 @@ class CertificateLifecycleService:
             await session.refresh(certificate)
             await self._dispatch_webhook(session, "certificate.created", certificate)
             return certificate
+
+    async def _find_request(
+        self,
+        session: AsyncSession,
+        payload: CertificateCreate,
+    ) -> Certificate | None:
+        """Return the durable request identified by name, account, and method."""
+        request = await session.scalar(
+            select(Certificate).where(
+                Certificate.name == payload.name,
+                Certificate.acme_account_ref == payload.acme_account_ref,
+                Certificate.challenge_method == payload.challenge_method,
+            )
+        )
+        return request
+
+    @staticmethod
+    def _resume_or_reject(existing: Certificate, payload: CertificateCreate) -> Certificate:
+        """Resume an identical DNS Persist request or reject an identity collision."""
+        if existing.challenge_method == "dns-persist" and existing.domains == payload.domains:
+            return existing
+        raise CertificateConflictError(
+            "Certificate name, ACME account, and challenge method already identify another request."
+        )
 
     async def issue_certificate(self, certificate_id: uuid.UUID) -> None:
         """Issue a queued DNS-provider certificate and deploy successful artifacts."""

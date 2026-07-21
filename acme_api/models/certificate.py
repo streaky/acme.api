@@ -6,7 +6,7 @@ import datetime as _dt
 import enum
 import uuid as _uuid
 
-from sqlalchemy import JSON, DateTime, Enum, String
+from sqlalchemy import JSON, DateTime, Enum, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from acme_api.deployer import deployment_directory_name
@@ -37,6 +37,14 @@ class Certificate(Base, TimestampMixin):
     """
 
     __tablename__ = "certificates"
+    __table_args__ = (
+        UniqueConstraint(
+            "name",
+            "acme_account_ref",
+            "challenge_method",
+            name="uq_certificates_request_identity",
+        ),
+    )
 
     # -- primary key ----------------------------------------------------------
 
