@@ -24,6 +24,7 @@ from acme_api.deployer import DeploymentError
 from acme_api.models.certificate import Certificate, CertificateStatus
 from acme_api.schemas.certificate import CertificateCreate, CertificateRead
 from acme_api.services.certificates import (
+    CertificateBackendUnavailableError,
     CertificateConflictError,
     CertificateLifecycleError,
     CertificateLifecycleService,
@@ -41,7 +42,11 @@ _NOT_FOUND_RESPONSE: dict[int | str, dict[str, Any]] = {404: {"description": "Ce
     response_model=CertificateRead,
     status_code=status.HTTP_202_ACCEPTED,
     summary="Create a certificate request",
-    responses={409: {"description": "Certificate name already exists."}},
+    responses={
+        409: {"description": "Certificate name already exists."},
+        422: {"description": "Certificate request cannot be created."},
+        503: {"description": "ACME backend is temporarily unavailable."},
+    },
 )
 async def create_certificate(
     payload: CertificateCreate,
@@ -56,6 +61,11 @@ async def create_certificate(
     except CertificateConflictError as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+    except CertificateBackendUnavailableError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=str(exc),
         ) from exc
     except CertificateLifecycleError as exc:

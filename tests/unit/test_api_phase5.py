@@ -9,7 +9,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from acme_api.backend.acmesh_errors import TransientAcmeShError
+from acme_api.backend.acmesh_errors import AcmeShError, TerminalAcmeShError, TransientAcmeShError
 from acme_api.backend.dataclasses import CertExpiry, IssuanceResult
 from acme_api.config import (
     AcmeAccountConfig,
@@ -31,6 +31,7 @@ class _ArtifactBackend:
         self.fail_issues = False
         self.renew_calls = 0
         self.persist_value_calls = 0
+        self.persist_value_error: AcmeShError | None = None
         self.persist_value_requests: list[tuple[str, bool]] = []
 
     async def register_account(self, email: str, server_url: str) -> object:
@@ -48,6 +49,8 @@ class _ArtifactBackend:
         del account_key_path, server_url
         self.persist_value_calls += 1
         self.persist_value_requests.append((domain, wildcard))
+        if self.persist_value_error is not None:
+            raise self.persist_value_error
         return f"persist-value-for-{domain}"
 
     async def issue_certificate(
@@ -213,6 +216,34 @@ def test_dns_persist_lifecycle_endpoints(tmp_path: Path) -> None:
         assert renewed.json()["status"] == "valid"
 
     assert backend.persist_value_requests == [("example.com", True)]
+
+
+def test_dns_persist_value_generation_errors_are_controlled(tmp_path: Path) -> None:
+    """DNS Persist setup reports backend failures without creating a request."""
+    headers = {"Authorization": "Bearer operator-key-12345"}
+    payload = {
+        "name": "manual-example-cert",
+        "domains": ["example.com"],
+        "acme_account_ref": "letsencrypt-production",
+        "challenge_method": "dns-persist",
+    }
+    cases = (
+        (TerminalAcmeShError("Could not parse DNS Persist value"), 422),
+        (TransientAcmeShError("ACME server unavailable"), 503),
+    )
+
+    app = _make_app(tmp_path)
+    backend = app.state.acme_backend
+    assert isinstance(backend, _ArtifactBackend)
+    for error, expected_status in cases:
+        backend.persist_value_error = error
+        with TestClient(app) as client:
+            response = client.post("/v1/certificates", headers=headers, json=payload)
+            requests = client.get("/v1/certificates", headers=headers)
+
+        assert response.status_code == expected_status
+        assert response.json()["detail"] == f"Unable to generate DNS Persist instructions: {error}"
+        assert requests.json() == []
 
 
 def test_dns_persist_rejects_sans_outside_primary_scope(tmp_path: Path) -> None:

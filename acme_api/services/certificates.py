@@ -30,6 +30,10 @@ class CertificateConflictError(CertificateLifecycleError):
     """Raised when a certificate cannot be created due to a uniqueness conflict."""
 
 
+class CertificateBackendUnavailableError(CertificateLifecycleError):
+    """Raised when a transient ACME backend failure prevents request creation."""
+
+
 class CertificateNotFoundError(CertificateLifecycleError):
     """Raised when a certificate row does not exist."""
 
@@ -82,12 +86,19 @@ class CertificateLifecycleService:
 
             if payload.challenge_method == "dns-persist":
                 dns_persist_domain, wildcard_policy = _dns_persist_scope(payload.domains)
-                dns_value = await self._backend.make_dns_persist_value(
-                    dns_persist_domain,
-                    wildcard=wildcard_policy,
-                    account_key_path=_account_key_path(account),
-                    server_url=account.server_url,
-                )
+                try:
+                    dns_value = await self._backend.make_dns_persist_value(
+                        dns_persist_domain,
+                        wildcard=wildcard_policy,
+                        account_key_path=_account_key_path(account),
+                        server_url=account.server_url,
+                    )
+                except TransientAcmeShError as exc:
+                    raise CertificateBackendUnavailableError(
+                        f"Unable to generate DNS Persist instructions: {exc}"
+                    ) from exc
+                except AcmeShError as exc:
+                    raise CertificateLifecycleError(f"Unable to generate DNS Persist instructions: {exc}") from exc
                 certificate = Certificate(
                     name=payload.name,
                     domains=payload.domains,
