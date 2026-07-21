@@ -8,7 +8,7 @@ if t.TYPE_CHECKING:
     from acme_api.backend.dataclasses import AccountInfo, CertExpiry, IssuanceResult
 
 
-ChallengeMethod = t.Literal["dns-01", "webroot"]
+ChallengeMethod = t.Literal["dns-01", "dns-persist", "webroot"]
 
 
 class AcmeBackend(t.Protocol):
@@ -23,6 +23,13 @@ class AcmeBackend(t.Protocol):
         email: str,
         server_url: str,
     ) -> AccountInfo: ...
+
+    async def make_dns_persist_value(
+        self,
+        domain: str,
+        account_key_path: str | None = None,
+        server_url: str | None = None,
+    ) -> str: ...
 
     async def issue_certificate(
         self,

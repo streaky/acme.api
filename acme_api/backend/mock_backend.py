@@ -20,6 +20,16 @@ class MockAcmeBackend:
         key_path = self.base_dir / "acct.key"
         return AccountInfo(key_path=str(key_path), email=email, server_url=server_url)
 
+    async def make_dns_persist_value(
+        self,
+        domain: str,
+        account_key_path: str | None = None,
+        server_url: str | None = None,
+    ) -> str:
+        """Return a deterministic account-bound DNS Persist value."""
+        del account_key_path, server_url
+        return f"dns-persist-{domain}"
+
     async def issue_certificate(
         self,
         domains: list[str],

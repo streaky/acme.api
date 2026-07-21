@@ -17,6 +17,7 @@ class CertificateStatus(StrEnum):
     """Lifecycle states a certificate can occupy."""
 
     PENDING = "pending"
+    PENDING_DNS = "pending_dns"
     ISSUING = "issuing"
     VALID = "valid"
     RENEWING = "renewing"
@@ -25,23 +26,21 @@ class CertificateStatus(StrEnum):
 
 
 CertificateKeyAlgorithm = Literal["ecdsa", "rsa-2048", "rsa-4096"]
+ChallengeMethod = Literal["dns-01", "dns-persist"]
 
 
 class CertificateCreate(BaseModel):
-    """Payload for creating a new certificate.
+    """Payload for creating a certificate request.
 
-    Attributes:
-        name: Human-readable label / alias for the certificate.
-        domains: List of DNS names covered by this certificate.
-        acme_account_ref: Alias referencing an ACME account in config.yaml.
-        dns_provider_ref: Alias referencing a DNS provider in config.yaml.
-        key_algorithm: Key algorithm (default ``ecdsa``).
+    DNS Persist requests omit ``dns_provider_ref`` and return a stable, account-bound
+    TXT instruction which must be retained for the certificate lifetime.
     """
 
     name: str = Field(min_length=1, max_length=255)
     domains: list[str] = Field(min_length=1)
     acme_account_ref: str
-    dns_provider_ref: str
+    challenge_method: ChallengeMethod = "dns-01"
+    dns_provider_ref: str | None = None
     key_algorithm: CertificateKeyAlgorithm = "ecdsa"
 
     @field_validator("domains")
@@ -58,21 +57,17 @@ class CertificateCreate(BaseModel):
         return v
 
 
-class CertificateRead(BaseModel):
-    """Full certificate representation returned by GET endpoints.
+class DnsPersistChallenge(BaseModel):
+    """One-time account-bound TXT record required by DNS Persist mode."""
 
-    Attributes:
-        id: Unique identifier.
-        name: Human-readable label / alias.
-        domains: List of DNS names covered by this certificate.
-        acme_account_ref: Alias referencing an ACME account in config.yaml.
-        dns_provider_ref: Alias referencing a DNS provider in config.yaml.
-        key_algorithm: Key algorithm used for the certificate key pair.
-        expiry_date: UTC datetime when the certificate expires; ``None`` before issuance.
-        status: Current lifecycle state of the certificate.
-        created_at: Timestamp when the row was first inserted.
-        updated_at: Timestamp of the most recent update to this row.
-    """
+    method: Literal["dns-persist"]
+    record_type: Literal["TXT"]
+    record_name: str
+    record_value: str
+
+
+class CertificateRead(BaseModel):
+    """Full certificate representation returned by authenticated endpoints."""
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -80,7 +75,9 @@ class CertificateRead(BaseModel):
     name: str
     domains: list[str]
     acme_account_ref: str
-    dns_provider_ref: str
+    dns_provider_ref: str | None = None
+    challenge_method: ChallengeMethod = "dns-01"
+    challenge: DnsPersistChallenge | None = None
     key_algorithm: str
     expiry_date: datetime | None = None
     status: CertificateStatus

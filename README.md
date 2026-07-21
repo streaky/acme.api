@@ -67,12 +67,10 @@ Development uses `uv` for locking and export verification. `make dev` follows Vu
 
 Configuration is YAML. By default the app loads `./config.yaml`; set `ACME_API_CONFIG=/path/to/config.yaml` to override it. See `config.example.yaml` for a complete reference.
 
-Certificate issuance requires:
-
-- one or more `acme_accounts`
-- one or more `dns_providers`
-- a DNS provider env file readable by the container
-- at least one bootstrap API key in `api_keys`
+Certificate issuance requires an `acme_accounts` entry and a bootstrap API key in `api_keys`.
+Standard DNS-01 issuance additionally requires a configured `dns_providers` alias and a
+provider credential file readable by the container. DNS Persist issuance does not require
+either: its one-time TXT record is generated from the selected account.
 
 Example certificate request:
 
@@ -86,6 +84,20 @@ Example certificate request:
 }
 ```
 
+### DNS Persist certificates
+
+For a zone managed manually, create a request with `"challenge_method": "dns-persist"` and
+omit `dns_provider_ref`. The response remains `pending_dns` and contains an account-bound
+TXT instruction at `_validation-persist.<primary-domain>`. Publish that exact value and
+retain it for the certificate's lifetime, then call `POST /v1/certificates/{id}/authorize`.
+The service issues with the selected account only after that explicit authorization.
+
+Creation with the same name, domains, and account resumes the stored request and instruction;
+it does not create another ACME order. A different account creates a distinct instruction and
+cannot replace an existing request's account. Once valid, DNS Persist certificates renew
+unattended through the normal scheduler without DNS provider credentials or another TXT update.
+The instruction is returned only from authenticated certificate endpoints.
+
 ## REST API
 
 OpenAPI is generated at `/openapi.json`; Swagger UI is available at `/docs`.
@@ -94,9 +106,10 @@ OpenAPI is generated at `/openapi.json`; Swagger UI is available at `/docs`.
 |---|---|---|---|
 | `GET` | `/health` | none | Liveness probe with uptime |
 | `GET` | `/ready` | none | DB and `acme.sh` readiness |
-| `POST` | `/v1/certificates` | operator | Create and queue issuance |
+| `POST` | `/v1/certificates` | operator | Create a certificate request; DNS Persist returns its stored TXT instruction |
 | `GET` | `/v1/certificates` | readonly | List certificates |
-| `GET` | `/v1/certificates/{id}` | readonly | Read certificate details |
+| `GET` | `/v1/certificates/{id}` | readonly | Read certificate detail and DNS Persist instruction |
+| `POST` | `/v1/certificates/{id}/authorize` | operator | Authorize or retry DNS Persist issuance after publishing TXT |
 | `POST` | `/v1/certificates/{id}/renew` | operator | Queue manual renewal |
 | `DELETE` | `/v1/certificates/{id}` | operator | Soft-delete as revoked |
 | `GET` | `/v1/accounts` | readonly | List configured ACME accounts |

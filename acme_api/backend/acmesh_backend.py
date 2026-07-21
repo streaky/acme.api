@@ -146,6 +146,21 @@ class AcmeShBackend(AcmeBackend):
             server_url=server_url,
         )
 
+    async def make_dns_persist_value(
+        self,
+        domain: str,
+        account_key_path: str | None = None,
+        server_url: str | None = None,
+    ) -> str:
+        """Generate the account-bound persistent TXT value for ``domain``."""
+        args = ["--make-dns-persist-value", "--domain", domain]
+        if server_url is not None:
+            args += ["--server", server_url]
+        if account_key_path is not None:
+            args += ["--accountkey-file", account_key_path]
+        _, output = await self._run(args)
+        return _dns_persist_value_from_output(output)
+
     async def issue_certificate(
         self,
         domains: list[str],
@@ -180,6 +195,8 @@ class AcmeShBackend(AcmeBackend):
                 args += ["--dnssleep", str(self._cfg.dnssleep_seconds)]
             if env_vars_file is not None:
                 command_env.update(_load_env_vars(pathlib.Path(str(env_vars_file))))
+        elif method == "dns-persist":
+            args.append("--dns-persist")
         elif method == "webroot":
             webroot = str(challenge_params["webroot_dir"])
             args += ["--webroot", webroot]
@@ -322,3 +339,15 @@ def _load_env_vars(env_vars_file: pathlib.Path) -> dict[str, str]:
                 continue
             result[key] = shlex.split(value.strip())[0] if value.strip() else ""
     return result
+
+
+def _dns_persist_value_from_output(output: str) -> str:
+    """Extract the persistent TXT value from acme.sh output."""
+    lines = [line.strip() for line in output.splitlines() if line.strip()]
+    for line in lines:
+        match = re.search(r"(?:txt\s+)?(?:record\s+)?value\s*[:=]\s*['\"]?([^'\"\s]+)", line, re.IGNORECASE)
+        if match is not None:
+            return match.group(1)
+    if len(lines) == 1 and not any(character.isspace() for character in lines[0]):
+        return lines[0]
+    raise TerminalAcmeShError("acme.sh did not return a DNS Persist TXT value")

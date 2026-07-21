@@ -53,6 +53,16 @@ class ArtifactBackend:
             server_url=server_url,
         )
 
+    async def make_dns_persist_value(
+        self,
+        domain: str,
+        account_key_path: str | None = None,
+        server_url: str | None = None,
+    ) -> str:
+        """Return a deterministic DNS Persist value for protocol completeness."""
+        del account_key_path, server_url
+        return f"persist-{domain}"
+
     async def issue_certificate(
         self,
         domains: list[str],

@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import datetime as dt
+import uuid
 from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from acme_api.backend.acmesh_errors import TransientAcmeShError
 from acme_api.backend.dataclasses import CertExpiry, IssuanceResult
 from acme_api.config import (
     AcmeAccountConfig,
@@ -26,10 +28,23 @@ class _ArtifactBackend:
     def __init__(self, root: Path) -> None:
         self._root = root
         self.issue_calls = 0
+        self.fail_issues = False
         self.renew_calls = 0
+        self.persist_value_calls = 0
 
     async def register_account(self, email: str, server_url: str) -> object:
         raise NotImplementedError
+
+    async def make_dns_persist_value(
+        self,
+        domain: str,
+        account_key_path: str | None = None,
+        server_url: str | None = None,
+    ) -> str:
+        """Return a stable, account-bound test instruction."""
+        del account_key_path, server_url
+        self.persist_value_calls += 1
+        return f"persist-value-for-{domain}"
 
     async def issue_certificate(
         self,
@@ -41,6 +56,8 @@ class _ArtifactBackend:
     ) -> IssuanceResult:
         del method, challenge_params, server_url
         self.issue_calls += 1
+        if self.fail_issues:
+            raise TransientAcmeShError("DNS propagation may still be in progress")
         return self._result(domains, "issue", account_key_path)
 
     async def renew_certificate(
@@ -148,6 +165,132 @@ def test_certificate_lifecycle_endpoints(tmp_path: Path) -> None:
 
         revoked = client.get(f"/v1/certificates/{certificate_id}", headers=headers)
         assert revoked.json()["status"] == "revoked"
+
+
+def test_dns_persist_lifecycle_endpoints(tmp_path: Path) -> None:
+    """DNS Persist requests wait for explicit authorization and retain instructions."""
+    headers = {"Authorization": "Bearer operator-key-12345"}
+    with TestClient(_make_app(tmp_path)) as client:
+        payload = {
+            "name": "manual-example-cert",
+            "domains": ["example.com"],
+            "acme_account_ref": "letsencrypt-production",
+            "challenge_method": "dns-persist",
+            "key_algorithm": "ecdsa",
+        }
+        created = client.post("/v1/certificates", headers=headers, json=payload)
+        assert created.status_code == 202
+        pending = created.json()
+        assert pending["status"] == "pending_dns"
+        assert pending["challenge"] == {
+            "method": "dns-persist",
+            "record_type": "TXT",
+            "record_name": "_validation-persist.example.com",
+            "record_value": "persist-value-for-example.com",
+        }
+
+        resumed = client.post("/v1/certificates", headers=headers, json=payload)
+        assert resumed.status_code == 202
+        assert resumed.json()["id"] == pending["id"]
+        assert resumed.json()["challenge"] == pending["challenge"]
+
+        authorized = client.post(f"/v1/certificates/{pending['id']}/authorize", headers=headers)
+        assert authorized.json()["status"] == "issuing"
+        issued = client.get(f"/v1/certificates/{pending['id']}", headers=headers)
+        assert issued.json()["status"] == "valid"
+        assert authorized.json()["challenge"] == pending["challenge"]
+
+        renewed = client.post(f"/v1/certificates/{pending['id']}/renew", headers=headers)
+        assert renewed.status_code == 202
+        assert renewed.json()["status"] == "valid"
+
+
+def test_dns_persist_dns_failure_can_be_authorized_again(tmp_path: Path) -> None:
+    """A DNS error retains the durable instruction and allows an explicit retry."""
+    headers = {"Authorization": "Bearer operator-key-12345"}
+    app = _make_app(tmp_path)
+    backend = app.state.acme_backend
+    assert isinstance(backend, _ArtifactBackend)
+    backend.fail_issues = True
+    with TestClient(app) as client:
+        created = client.post(
+            "/v1/certificates",
+            headers=headers,
+            json={
+                "name": "retry-manual-cert",
+                "domains": ["retry.example.com"],
+                "acme_account_ref": "letsencrypt-production",
+                "challenge_method": "dns-persist",
+            },
+        ).json()
+        certificate_id = created["id"]
+        challenge = created["challenge"]
+        client.post(f"/v1/certificates/{certificate_id}/authorize", headers=headers)
+        failed = client.get(f"/v1/certificates/{certificate_id}", headers=headers).json()
+        assert failed["status"] == "failed"
+        assert failed["challenge"] == challenge
+
+        backend.fail_issues = False
+        retried = client.post(f"/v1/certificates/{certificate_id}/authorize", headers=headers)
+        assert retried.json()["status"] == "issuing"
+        assert client.get(f"/v1/certificates/{certificate_id}", headers=headers).json()["status"] == "valid"
+
+
+def test_dns_persist_request_survives_app_restart(tmp_path: Path) -> None:
+    """Restarting the API resumes stored pending DNS state without a new order."""
+    headers = {"Authorization": "Bearer operator-key-12345"}
+    payload = {
+        "name": "restart-manual-cert",
+        "domains": ["restart.example.com"],
+        "acme_account_ref": "letsencrypt-production",
+        "challenge_method": "dns-persist",
+    }
+    first_app = _make_app(tmp_path)
+    first_backend = first_app.state.acme_backend
+    assert isinstance(first_backend, _ArtifactBackend)
+    with TestClient(first_app) as client:
+        original = client.post("/v1/certificates", headers=headers, json=payload).json()
+    assert first_backend.persist_value_calls == 1
+
+    restarted_app = _make_app(tmp_path)
+    restarted_backend = restarted_app.state.acme_backend
+    assert isinstance(restarted_backend, _ArtifactBackend)
+    with TestClient(restarted_app) as client:
+        resumed = client.post("/v1/certificates", headers=headers, json=payload).json()
+    assert resumed["id"] == original["id"]
+    assert resumed["challenge"] == original["challenge"]
+    assert restarted_backend.persist_value_calls == 0
+
+
+def test_dns_persist_authorization_reports_invalid_requests(tmp_path: Path) -> None:
+    """Authorization and account validation expose deliberate client errors."""
+    headers = {"Authorization": "Bearer operator-key-12345"}
+    with TestClient(_make_app(tmp_path)) as client:
+        unknown_account = client.post(
+            "/v1/certificates",
+            headers=headers,
+            json={
+                "name": "unknown-account-cert",
+                "domains": ["unknown.example.com"],
+                "acme_account_ref": "not-configured",
+                "challenge_method": "dns-persist",
+            },
+        )
+        assert unknown_account.status_code == 422
+        assert client.post(f"/v1/certificates/{uuid.uuid4()}/authorize", headers=headers).status_code == 404
+
+        normal = client.post(
+            "/v1/certificates",
+            headers=headers,
+            json={
+                "name": "normal-cert",
+                "domains": ["normal.example.com"],
+                "acme_account_ref": "letsencrypt-production",
+                "dns_provider_ref": "cloudflare-main",
+            },
+        )
+        assert normal.status_code == 202
+        assert client.post(f"/v1/certificates/{normal.json()['id']}/authorize", headers=headers).status_code == 409
 
 
 def test_config_and_events_endpoints(tmp_path: Path) -> None:
