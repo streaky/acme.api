@@ -107,14 +107,16 @@ class TestDnsPersistCommands:
     @pytest.mark.anyio
     async def test_make_dns_persist_value(self, backend: AcmeShBackend) -> None:
         with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_run:
-            mock_run.return_value = successful_process("persist-token\n")
+            mock_run.return_value = successful_process(
+                'TXT persist value:  "pebble.letsencrypt.org; accounturi=https://pebble:14000/my-account/123"\n'
+            )
 
             value = await backend.make_dns_persist_value("example.com")
 
         call_args = mock_run.call_args.args
         assert "--make-dns-persist-value" in call_args
         assert has_flag_pair(call_args, "--domain", "example.com")
-        assert value == "persist-token"
+        assert value == "pebble.letsencrypt.org; accounturi=https://pebble:14000/my-account/123"
 
     @pytest.mark.anyio
     async def test_issue_certificate_dns_persist(self, backend: AcmeShBackend) -> None:

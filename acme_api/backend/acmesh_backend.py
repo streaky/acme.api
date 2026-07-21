@@ -345,9 +345,9 @@ def _dns_persist_value_from_output(output: str) -> str:
     """Extract the persistent TXT value from acme.sh output."""
     lines = [line.strip() for line in output.splitlines() if line.strip()]
     for line in lines:
-        match = re.search(r"(?:txt\s+)?(?:record\s+)?value\s*[:=]\s*['\"]?([^'\"\s]+)", line, re.IGNORECASE)
+        match = re.search(r"txt\s+persist\s+value\s*:\s*(.+)$", line, re.IGNORECASE)
         if match is not None:
-            return match.group(1)
+            return match.group(1).strip().strip("\"'")
     if len(lines) == 1 and not any(character.isspace() for character in lines[0]):
         return lines[0]
     raise TerminalAcmeShError("acme.sh did not return a DNS Persist TXT value")

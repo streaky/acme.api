@@ -17,8 +17,8 @@ RUN /opt/venv/bin/pip install --no-deps .
 
 FROM python:3.14-slim AS runner
 
-ARG ACME_SH_VERSION=3.1.3
-ARG ACME_SH_SHA256=efd12b265252f8875269960b6b31830731ccce2b3e6ff8e7ecfbee21fde35ab4
+ARG ACME_SH_VERSION=3.1.4
+ARG ACME_SH_SHA256=e5f8e187bbf5251e0cd8891f2622daab9850366bd17bea9f92c2fe2ee091fd32
 
 ENV ACME_API_CONFIG=/config/config.yaml \
     ACME_API_HOST=0.0.0.0 \
