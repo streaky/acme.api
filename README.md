@@ -90,7 +90,10 @@ For a zone managed manually, create a request with `"challenge_method": "dns-per
 omit `dns_provider_ref`. The response remains `pending_dns` and contains an account-bound
 TXT instruction at `_validation-persist.<primary-domain>`. Publish that exact value and
 retain it for the certificate's lifetime, then call `POST /v1/certificates/{id}/authorize`.
-The service issues with the selected account only after that explicit authorization.
+The service issues with the selected account only after that explicit authorization. DNS Persist
+SANs must be the primary domain or its subdomains. Multi-SAN and wildcard requests receive a
+`policy=wildcard` instruction, which deliberately authorizes that primary domain's subdomains;
+use separate requests for unrelated domains.
 
 Creation with the same name, domains, and account resumes the stored request and instruction;
 it does not create another ACME order. A different account creates a distinct instruction and

@@ -174,7 +174,10 @@ def test_certificate_lifecycle_endpoints(tmp_path: Path) -> None:
 def test_dns_persist_lifecycle_endpoints(tmp_path: Path) -> None:
     """DNS Persist requests wait for explicit authorization and retain instructions."""
     headers = {"Authorization": "Bearer operator-key-12345"}
-    with TestClient(_make_app(tmp_path)) as client:
+    app = _make_app(tmp_path)
+    backend = app.state.acme_backend
+    assert isinstance(backend, _ArtifactBackend)
+    with TestClient(app) as client:
         payload = {
             "name": "manual-example-cert",
             "domains": ["Example.COM", "WWW.Example.COM", "api.EXAMPLE.com"],
@@ -208,6 +211,32 @@ def test_dns_persist_lifecycle_endpoints(tmp_path: Path) -> None:
         renewed = client.post(f"/v1/certificates/{pending['id']}/renew", headers=headers)
         assert renewed.status_code == 202
         assert renewed.json()["status"] == "valid"
+
+    assert backend.persist_value_requests == [("example.com", True)]
+
+
+def test_dns_persist_rejects_sans_outside_primary_scope(tmp_path: Path) -> None:
+    """DNS Persist refuses SANs that a single returned TXT record cannot authorize."""
+    app = _make_app(tmp_path)
+    backend = app.state.acme_backend
+    assert isinstance(backend, _ArtifactBackend)
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/certificates",
+            headers={"Authorization": "Bearer operator-key-12345"},
+            json={
+                "name": "unrelated-manual-cert",
+                "domains": ["www.example.com", "example.com"],
+                "acme_account_ref": "letsencrypt-production",
+                "challenge_method": "dns-persist",
+            },
+        )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == (
+        "DNS Persist SANs must be the primary domain or its subdomains; create separate requests for unrelated domains."
+    )
+    assert not backend.persist_value_requests
 
 
 def test_wildcard_dns_persist_uses_base_domain_policy(tmp_path: Path) -> None:

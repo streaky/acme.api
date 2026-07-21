@@ -81,11 +81,10 @@ class CertificateLifecycleService:
                 return self._resume_or_reject(existing, payload)
 
             if payload.challenge_method == "dns-persist":
-                primary_domain = payload.domains[0]
-                dns_persist_domain = primary_domain.removeprefix("*.")
+                dns_persist_domain, wildcard_policy = _dns_persist_scope(payload.domains)
                 dns_value = await self._backend.make_dns_persist_value(
                     dns_persist_domain,
-                    wildcard=primary_domain.startswith("*."),
+                    wildcard=wildcard_policy,
                     account_key_path=_account_key_path(account),
                     server_url=account.server_url,
                 )
@@ -360,6 +359,19 @@ async def expiring_event_exists(
         )
     )
     return result.scalar_one_or_none() is not None
+
+
+def _dns_persist_scope(domains: list[str]) -> tuple[str, bool]:
+    """Return the primary DNS Persist scope and whether it needs wildcard policy."""
+    scope = domains[0].removeprefix("*.")
+    if any(
+        domain.removeprefix("*.") != scope and not domain.removeprefix("*.").endswith(f".{scope}") for domain in domains
+    ):
+        raise CertificateLifecycleError(
+            "DNS Persist SANs must be the primary domain or its subdomains; "
+            "create separate requests for unrelated domains."
+        )
+    return scope, len(domains) > 1 or domains[0].startswith("*.")
 
 
 def _account_key_path(account: AcmeAccountConfig) -> str | None:
