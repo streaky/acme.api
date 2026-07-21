@@ -45,16 +45,18 @@ class CertificateCreate(BaseModel):
 
     @field_validator("domains")
     @classmethod
-    def _validate_domains(cls, v: list[str]) -> list[str]:
-        """Each domain must be a valid DNS name or wildcard."""
+    def _validate_domains(cls, domains: list[str]) -> list[str]:
+        """Normalize and validate certificate domains while preserving the primary domain."""
+        normalized_domains = [domain.strip().lower() for domain in domains]
         pattern = re.compile(r"^(?:\*\.)?([a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$")
-        for domain in v:
+        for domain in normalized_domains:
             if not pattern.match(domain):
                 raise ValueError(f"Domain {domain!r} does not match a valid DNS label pattern.")
-            normalized = domain[2:] if domain.startswith("*.") else domain
-            if len(normalized) > _MAX_FQDN_LENGTH:
+            fqdn = domain[2:] if domain.startswith("*.") else domain
+            if len(fqdn) > _MAX_FQDN_LENGTH:
                 raise ValueError(f"Domain {domain!r} exceeds maximum length of {_MAX_FQDN_LENGTH} characters.")
-        return v
+        primary_domain = normalized_domains[0]
+        return [primary_domain, *sorted(set(normalized_domains[1:]) - {primary_domain})]
 
 
 class DnsPersistChallenge(BaseModel):

@@ -177,7 +177,7 @@ def test_dns_persist_lifecycle_endpoints(tmp_path: Path) -> None:
     with TestClient(_make_app(tmp_path)) as client:
         payload = {
             "name": "manual-example-cert",
-            "domains": ["example.com"],
+            "domains": ["Example.COM", "WWW.Example.COM", "api.EXAMPLE.com"],
             "acme_account_ref": "letsencrypt-production",
             "challenge_method": "dns-persist",
             "key_algorithm": "ecdsa",
@@ -193,7 +193,8 @@ def test_dns_persist_lifecycle_endpoints(tmp_path: Path) -> None:
             "record_value": "persist-value-for-example.com",
         }
 
-        resumed = client.post("/v1/certificates", headers=headers, json=payload)
+        resumed_payload = {**payload, "domains": ["example.com", "api.example.com", "www.example.com"]}
+        resumed = client.post("/v1/certificates", headers=headers, json=resumed_payload)
         assert resumed.status_code == 202
         assert resumed.json()["id"] == pending["id"]
         assert resumed.json()["challenge"] == pending["challenge"]

@@ -33,6 +33,24 @@ class TestCertificateCreate:
         assert cert.dns_provider_ref == "cloudflare"
         assert cert.key_algorithm == "ecdsa"
 
+    def test_domains_are_normalized_and_secondary_order_is_deterministic(self) -> None:
+        """Normalize equivalent DNS Persist domain identities without changing the primary."""
+        first_request = CertificateCreate(
+            name="my-cert",
+            domains=[" Example.COM ", "WWW.Example.COM", "api.example.com", "www.example.com"],
+            acme_account_ref="letsencrypt-staging",
+            challenge_method="dns-persist",
+        )
+        resumed_request = CertificateCreate(
+            name="my-cert",
+            domains=["example.com", "api.example.com", "www.example.com"],
+            acme_account_ref="letsencrypt-staging",
+            challenge_method="dns-persist",
+        )
+
+        assert first_request.domains == ["example.com", "api.example.com", "www.example.com"]
+        assert resumed_request.domains == first_request.domains
+
     def test_default_key_algorithm(self) -> None:
         """Default key_algorithm should be 'ecdsa' when omitted."""
         cert = CertificateCreate(
