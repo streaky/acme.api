@@ -20,10 +20,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from acme_api.auth.rbac import require_operator, require_readonly
 from acme_api.db import get_db_session
+from acme_api.deployer import DeploymentError
 from acme_api.models.certificate import Certificate, CertificateStatus
 from acme_api.schemas.certificate import CertificateCreate, CertificateRead
 from acme_api.services.certificates import (
+    CertificateBackendUnavailableError,
     CertificateConflictError,
+    CertificateLifecycleError,
     CertificateLifecycleService,
     CertificateNotFoundError,
     CertificateNotRenewableError,
@@ -39,7 +42,11 @@ _NOT_FOUND_RESPONSE: dict[int | str, dict[str, Any]] = {404: {"description": "Ce
     response_model=CertificateRead,
     status_code=status.HTTP_202_ACCEPTED,
     summary="Create a certificate request",
-    responses={409: {"description": "Certificate name already exists."}},
+    responses={
+        409: {"description": "Certificate name already exists."},
+        422: {"description": "Certificate request cannot be created."},
+        503: {"description": "ACME backend is temporarily unavailable."},
+    },
 )
 async def create_certificate(
     payload: CertificateCreate,
@@ -47,7 +54,7 @@ async def create_certificate(
     request: Request,
     _: object = Depends(require_operator),
 ) -> Certificate:
-    """Create a pending certificate record and queue issuance."""
+    """Create a certificate request, returning DNS instructions when applicable."""
     service = _certificate_service(request)
     try:
         certificate = await service.create_certificate(payload)
@@ -56,8 +63,24 @@ async def create_certificate(
             status_code=status.HTTP_409_CONFLICT,
             detail=str(exc),
         ) from exc
+    except CertificateBackendUnavailableError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
+    except CertificateLifecycleError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=str(exc),
+        ) from exc
+    except DeploymentError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=str(exc),
+        ) from exc
 
-    background_tasks.add_task(service.issue_certificate, certificate.id)
+    if certificate.status == CertificateStatus.PENDING:
+        background_tasks.add_task(service.issue_certificate, certificate.id)
     return certificate
 
 
@@ -103,6 +126,35 @@ async def get_certificate(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Certificate not found.",
         )
+    return certificate
+
+
+@router.post(
+    "/{certificate_id}/authorize",
+    response_model=CertificateRead,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Authorize DNS Persist certificate issuance",
+    responses={
+        **_NOT_FOUND_RESPONSE,
+        409: {"description": "Certificate does not use DNS Persist."},
+    },
+)
+async def authorize_dns_persist_certificate(
+    certificate_id: uuid.UUID,
+    background_tasks: BackgroundTasks,
+    request: Request,
+    _: object = Depends(require_operator),
+) -> Certificate:
+    """Start issuance after an operator has published the persistent TXT record."""
+    service = _certificate_service(request)
+    try:
+        certificate, starts_issuance = await service.authorize_dns_persist_certificate(certificate_id)
+    except CertificateNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except CertificateLifecycleError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    if starts_issuance:
+        background_tasks.add_task(service.issue_dns_persist_certificate, certificate.id)
     return certificate
 
 

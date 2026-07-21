@@ -67,12 +67,10 @@ Development uses `uv` for locking and export verification. `make dev` follows Vu
 
 Configuration is YAML. By default the app loads `./config.yaml`; set `ACME_API_CONFIG=/path/to/config.yaml` to override it. See `config.example.yaml` for a complete reference.
 
-Certificate issuance requires:
-
-- one or more `acme_accounts`
-- one or more `dns_providers`
-- a DNS provider env file readable by the container
-- at least one bootstrap API key in `api_keys`
+Certificate issuance requires an `acme_accounts` entry and a bootstrap API key in `api_keys`.
+Standard DNS-01 issuance additionally requires a configured `dns_providers` alias and a
+provider credential file readable by the container. DNS Persist issuance does not require
+either: its one-time TXT record is generated from the selected account.
 
 Example certificate request:
 
@@ -86,6 +84,23 @@ Example certificate request:
 }
 ```
 
+### DNS Persist certificates
+
+For a zone managed manually, create a request with `"challenge_method": "dns-persist"` and
+omit `dns_provider_ref`. The response remains `pending_dns` and contains an account-bound
+TXT instruction at `_validation-persist.<primary-domain>`. Publish that exact value and
+retain it for the certificate's lifetime, then call `POST /v1/certificates/{id}/authorize`.
+The service issues with the selected account only after that explicit authorization. DNS Persist
+SANs must be the primary domain or its subdomains. Multi-SAN and wildcard requests receive a
+`policy=wildcard` instruction, which deliberately authorizes that primary domain's subdomains;
+use separate requests for unrelated domains.
+
+Creation with the same name, domains, and account resumes the stored request and instruction;
+it does not create another ACME order. A different account creates a distinct instruction and
+cannot replace an existing request's account. Once valid, DNS Persist certificates renew
+unattended through the normal scheduler without DNS provider credentials or another TXT update.
+The instruction is returned only from authenticated certificate endpoints.
+
 ## REST API
 
 OpenAPI is generated at `/openapi.json`; Swagger UI is available at `/docs`.
@@ -94,9 +109,10 @@ OpenAPI is generated at `/openapi.json`; Swagger UI is available at `/docs`.
 |---|---|---|---|
 | `GET` | `/health` | none | Liveness probe with uptime |
 | `GET` | `/ready` | none | DB and `acme.sh` readiness |
-| `POST` | `/v1/certificates` | operator | Create and queue issuance |
+| `POST` | `/v1/certificates` | operator | Create a certificate request; DNS Persist returns its stored TXT instruction |
 | `GET` | `/v1/certificates` | readonly | List certificates |
-| `GET` | `/v1/certificates/{id}` | readonly | Read certificate details |
+| `GET` | `/v1/certificates/{id}` | readonly | Read certificate detail and DNS Persist instruction |
+| `POST` | `/v1/certificates/{id}/authorize` | operator | Authorize or retry DNS Persist issuance after publishing TXT |
 | `POST` | `/v1/certificates/{id}/renew` | operator | Queue manual renewal |
 | `DELETE` | `/v1/certificates/{id}` | operator | Soft-delete as revoked |
 | `GET` | `/v1/accounts` | readonly | List configured ACME accounts |
@@ -113,7 +129,9 @@ curl \
 
 ## Certificate Deployment
 
-Successful issuance and renewal deploy artifacts under the first requested domain:
+Successful issuance and renewal deploy artifacts under the `deployment_directory`
+reported by every authenticated certificate API response, relative to the configured
+deployment root. For ordinary certificates it is the first requested domain:
 
 ```text
 /certificates/example.com/
@@ -124,7 +142,16 @@ Successful issuance and renewal deploy artifacts under the first requested domai
     metadata.json
 ```
 
-Files are copied to temporary names, flushed, permissioned, and atomically renamed into place. Default permissions are `0644` for certificate files and `0600` for private keys.
+Wildcard domains use a portable collision-free name: a request for
+`*.example.com` reports `deployment_directory: "@wildcard@.example.com"` and
+deploys under `/certificates/@wildcard@.example.com/`. This cannot collide with a
+separate request for the valid literal name `wildcard.example.com`. Clients
+consuming the shared certificate volume must always resolve artifact paths from
+the API's `deployment_directory` field, never derive them from the requested identifier.
+
+Files are copied to temporary names, flushed, permissioned, and atomically renamed
+into place. Default permissions are `0644` for certificate files and `0600` for
+private keys.
 
 ## Architecture
 

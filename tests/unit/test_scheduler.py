@@ -40,6 +40,18 @@ class RecordingBackend:
             server_url=server_url,
         )
 
+    async def make_dns_persist_value(
+        self,
+        domain: str,
+        *,
+        wildcard: bool = False,
+        account_key_path: str | None = None,
+        server_url: str | None = None,
+    ) -> str:
+        """Return a deterministic value for protocol completeness."""
+        del wildcard, account_key_path, server_url
+        return f"persist-{domain}"
+
     async def issue_certificate(
         self,
         domains: list[str],
@@ -223,6 +235,34 @@ async def test_successful_renewal_updates_status_and_records_attempt(
     assert len(attempts) == 1
     assert attempts[0].status == "success"
     assert len(events) == 1
+
+
+@pytest.mark.anyio
+async def test_dns_persist_renewal_needs_no_dns_provider(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """A valid DNS Persist certificate follows the normal renewal deployment path."""
+    certificate = await _create_certificate(session_factory)
+    async with session_factory() as session:
+        stored = await session.get(Certificate, certificate.id)
+        assert stored is not None
+        stored.dns_provider_ref = None
+        stored.challenge_method = "dns-persist"
+        stored.dns_record_type = "TXT"
+        stored.dns_record_name = "_validation-persist.example.com"
+        stored.dns_record_value = "account-bound-value"
+        await session.commit()
+
+    backend = RecordingBackend()
+    renewal_scheduler = RenewalScheduler(
+        session_factory=session_factory,
+        backend=backend,
+        config=RenewalConfig(),
+        scheduler=AsyncIOScheduler(timezone=dt.UTC),
+    )
+    await renewal_scheduler.renew_certificate(certificate.id)
+
+    assert backend.calls == 1
 
 
 @pytest.mark.anyio

@@ -8,10 +8,12 @@ from typing import Protocol, cast
 
 import pytest
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from acme_api.config import AppSettings, DatabaseConfig, DeploymentConfig
 from acme_api.db import get_db, get_session_factory, init_db, init_engine
+from acme_api.models.certificate import Certificate, CertificateStatus
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -103,6 +105,38 @@ class TestGetDb:
                     {"id": str(row_id)},
                 )
                 assert result.scalar_one() == "test.event"
+        finally:
+            await engine.dispose()
+
+    @pytest.mark.anyio
+    async def test_certificate_request_identity_is_unique(self, settings: AppSettings) -> None:
+        """The database rejects concurrent-equivalent certificate request rows."""
+        engine = init_engine(settings=settings)
+        try:
+            await init_db(engine=engine)
+            async with AsyncSession(engine) as session:
+                session.add_all(
+                    [
+                        Certificate(
+                            name="manual-example",
+                            domains=["example.com"],
+                            acme_account_ref="letsencrypt",
+                            challenge_method="dns-persist",
+                            key_algorithm="ecdsa",
+                            status=CertificateStatus.PENDING_DNS,
+                        ),
+                        Certificate(
+                            name="manual-example",
+                            domains=["www.example.com"],
+                            acme_account_ref="letsencrypt",
+                            challenge_method="dns-persist",
+                            key_algorithm="ecdsa",
+                            status=CertificateStatus.PENDING_DNS,
+                        ),
+                    ]
+                )
+                with pytest.raises(IntegrityError):
+                    await session.flush()
         finally:
             await engine.dispose()
 

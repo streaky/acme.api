@@ -6,9 +6,10 @@ import datetime as _dt
 import enum
 import uuid as _uuid
 
-from sqlalchemy import JSON, DateTime, Enum, String
+from sqlalchemy import JSON, DateTime, Enum, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from acme_api.deployer import deployment_directory_name
 from acme_api.models.base import Base, TimestampMixin
 
 
@@ -16,6 +17,7 @@ class CertificateStatus(enum.StrEnum):
     """Lifecycle states a certificate can occupy."""
 
     PENDING = "pending"
+    PENDING_DNS = "pending_dns"
     ISSUING = "issuing"
     VALID = "valid"
     RENEWING = "renewing"
@@ -35,6 +37,14 @@ class Certificate(Base, TimestampMixin):
     """
 
     __tablename__ = "certificates"
+    __table_args__ = (
+        UniqueConstraint(
+            "name",
+            "acme_account_ref",
+            "challenge_method",
+            name="uq_certificates_request_identity",
+        ),
+    )
 
     # -- primary key ----------------------------------------------------------
 
@@ -48,7 +58,6 @@ class Certificate(Base, TimestampMixin):
 
     name: Mapped[str] = mapped_column(
         String(255),
-        unique=True,
         index=True,
         nullable=False,
         doc="Human-readable label / alias for the certificate.",
@@ -66,11 +75,50 @@ class Certificate(Base, TimestampMixin):
         nullable=False,
         doc="Alias referencing the ACME account configuration block.",
     )
-    dns_provider_ref: Mapped[str] = mapped_column(
+    dns_provider_ref: Mapped[str | None] = mapped_column(
         String(128),
-        nullable=False,
-        doc="Alias referencing the DNS provider configuration block.",
+        nullable=True,
+        doc="Alias referencing the DNS provider configuration block, when required.",
     )
+
+    challenge_method: Mapped[str] = mapped_column(
+        String(32),
+        default="dns-01",
+        nullable=False,
+        doc="Durable ACME challenge method used for issuance and renewal.",
+    )
+    dns_record_type: Mapped[str | None] = mapped_column(
+        String(16),
+        nullable=True,
+        doc="Persistent DNS record type for DNS Persist requests.",
+    )
+    dns_record_name: Mapped[str | None] = mapped_column(
+        String(255),
+        nullable=True,
+        doc="Persistent DNS record owner for DNS Persist requests.",
+    )
+    dns_record_value: Mapped[str | None] = mapped_column(
+        String(2048),
+        nullable=True,
+        doc="Account-bound persistent DNS record value for DNS Persist requests.",
+    )
+
+    @property
+    def challenge(self) -> dict[str, str] | None:
+        """Return the stored DNS Persist instruction for authenticated API output."""
+        if self.challenge_method != "dns-persist" or self.dns_record_value is None:
+            return None
+        return {
+            "method": "dns-persist",
+            "record_type": self.dns_record_type or "TXT",
+            "record_name": self.dns_record_name or "",
+            "record_value": self.dns_record_value,
+        }
+
+    @property
+    def deployment_directory(self) -> str:
+        """Return the artifact directory relative to the configured deployment root."""
+        return deployment_directory_name(self.domains[0])
 
     # -- key parameters -------------------------------------------------------
 

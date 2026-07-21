@@ -17,7 +17,7 @@ from acme_api.auth.hash import (
     hash_api_key,
     verify_api_key,
 )
-from acme_api.config import AcmeConfig, AppSettings, DatabaseConfig, DeploymentConfig
+from acme_api.config import AcmeAccountConfig, AcmeConfig, AppSettings, DatabaseConfig, DeploymentConfig
 from acme_api.db import get_session_factory, init_db, init_engine
 from acme_api.main import create_app
 from acme_api.models.api_key import APIKey, APIKeyRole
@@ -184,6 +184,7 @@ class TestRBACRoutes:
             database=DatabaseConfig(url=f"sqlite+aiosqlite:///{tmp_path}/test.db"),
             deployment=DeploymentConfig(directory=tmp_path / "certs"),
             acme=AcmeConfig(home_dir=tmp_path / "acmesh"),
+            acme_accounts=[AcmeAccountConfig(name="le")],
             api_keys={
                 "admin": "admin-key-12345",
                 "operator": "operator-key-12345",

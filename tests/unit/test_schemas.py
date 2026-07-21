@@ -33,6 +33,24 @@ class TestCertificateCreate:
         assert cert.dns_provider_ref == "cloudflare"
         assert cert.key_algorithm == "ecdsa"
 
+    def test_domains_are_normalized_and_secondary_order_is_deterministic(self) -> None:
+        """Normalize equivalent DNS Persist domain identities without changing the primary."""
+        first_request = CertificateCreate(
+            name="my-cert",
+            domains=[" Example.COM ", "WWW.Example.COM", "api.example.com", "www.example.com"],
+            acme_account_ref="letsencrypt-staging",
+            challenge_method="dns-persist",
+        )
+        resumed_request = CertificateCreate(
+            name="my-cert",
+            domains=["example.com", "api.example.com", "www.example.com"],
+            acme_account_ref="letsencrypt-staging",
+            challenge_method="dns-persist",
+        )
+
+        assert first_request.domains == ["example.com", "api.example.com", "www.example.com"]
+        assert resumed_request.domains == first_request.domains
+
     def test_default_key_algorithm(self) -> None:
         """Default key_algorithm should be 'ecdsa' when omitted."""
         cert = CertificateCreate(
@@ -123,6 +141,7 @@ class TestCertificateRead:
             "key_algorithm": "ecdsa",
             "expiry_date": now.replace(year=now.year + 1),
             "status": CertificateStatus.PENDING,
+            "deployment_directory": "example.com",
             "created_at": now,
             "updated_at": now,
         }
@@ -137,6 +156,7 @@ class TestCertificateRead:
         assert cert.dns_provider_ref == data["dns_provider_ref"]
         assert cert.key_algorithm == data["key_algorithm"]
         assert cert.expiry_date == data["expiry_date"]
+        assert cert.deployment_directory == data["deployment_directory"]
         assert cert.status == CertificateStatus.PENDING
         assert cert.created_at == now
         assert cert.updated_at == now
