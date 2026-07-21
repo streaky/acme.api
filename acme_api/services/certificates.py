@@ -7,7 +7,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Protocol
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -187,14 +187,26 @@ class CertificateLifecycleService:
                 raise CertificateNotFoundError("Certificate not found.")
             if certificate.challenge_method != "dns-persist":
                 raise CertificateLifecycleError("Certificate does not use DNS Persist.")
-            if certificate.status == CertificateStatus.ISSUING:
-                return certificate, False
             if certificate.status not in (CertificateStatus.PENDING_DNS, CertificateStatus.FAILED):
                 return certificate, False
-            certificate.status = CertificateStatus.ISSUING
+            result = await session.execute(
+                update(Certificate)
+                .where(
+                    Certificate.id == certificate_id,
+                    Certificate.status.in_((CertificateStatus.PENDING_DNS, CertificateStatus.FAILED)),
+                )
+                .values(status=CertificateStatus.ISSUING)
+                .returning(Certificate.id)
+            )
+            if result.scalar_one_or_none() is None:
+                await session.rollback()
+                certificate = await session.get(Certificate, certificate_id)
+                if certificate is None:
+                    raise CertificateNotFoundError("Certificate not found.")
+                return certificate, False
+            await session.refresh(certificate)
             await self._record_event(session, certificate, "certificate.authorization_requested", {})
             await session.commit()
-            await session.refresh(certificate)
             return certificate, True
 
     async def issue_dns_persist_certificate(self, certificate_id: uuid.UUID) -> None:
