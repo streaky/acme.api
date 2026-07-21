@@ -27,6 +27,8 @@ class AcmeBackend(t.Protocol):
     async def make_dns_persist_value(
         self,
         domain: str,
+        *,
+        wildcard: bool = False,
         account_key_path: str | None = None,
         server_url: str | None = None,
     ) -> str: ...

@@ -43,11 +43,13 @@ class RecordingBackend:
     async def make_dns_persist_value(
         self,
         domain: str,
+        *,
+        wildcard: bool = False,
         account_key_path: str | None = None,
         server_url: str | None = None,
     ) -> str:
         """Return a deterministic value for protocol completeness."""
-        del account_key_path, server_url
+        del wildcard, account_key_path, server_url
         return f"persist-{domain}"
 
     async def issue_certificate(

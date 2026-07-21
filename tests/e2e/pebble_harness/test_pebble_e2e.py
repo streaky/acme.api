@@ -24,7 +24,8 @@ CHALLTESTSRV_URL = os.environ.get("PEBBLE_CHALLTESTSRV_URL", "http://pebble-chal
 
 #: Resolved by challtestsrv inside the compose network; never leaves it.
 TEST_DOMAIN = "harness-e2e.example.test"
-PERSIST_TEST_DOMAIN = "persist-harness-e2e.example.test"
+PERSIST_TEST_DOMAIN = "*.persist-harness-e2e.example.test"
+PERSIST_BASE_DOMAIN = PERSIST_TEST_DOMAIN.removeprefix("*.")
 
 HEALTH_TIMEOUT_SEC = 120.0
 ISSUANCE_TIMEOUT_SEC = 300.0
@@ -130,7 +131,7 @@ def test_dns_persist_workflow_issues_and_deploys_certificate() -> None:
         challenge = created["challenge"]
         assert challenge["method"] == "dns-persist"
         assert challenge["record_type"] == "TXT"
-        assert challenge["record_name"] == f"_validation-persist.{PERSIST_TEST_DOMAIN}"
+        assert challenge["record_name"] == f"_validation-persist.{PERSIST_BASE_DOMAIN}"
         assert challenge["record_value"]
 
         published = httpx2.post(
@@ -150,7 +151,7 @@ def test_dns_persist_workflow_issues_and_deploys_certificate() -> None:
             assert events.status_code == 200, events.text
             raise AssertionError(f"DNS Persist issuance failed: {final}; events: {events.json()}")
 
-    deploy_dir = RUNTIME_DIR / "certificates" / PERSIST_TEST_DOMAIN
+    deploy_dir = RUNTIME_DIR / "certificates" / f"wildcard.{PERSIST_BASE_DOMAIN}"
     assert final["status"] == "valid"
     assert final["expiry_date"] is not None
     assert final["challenge"] == challenge

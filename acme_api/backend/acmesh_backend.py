@@ -149,11 +149,15 @@ class AcmeShBackend(AcmeBackend):
     async def make_dns_persist_value(
         self,
         domain: str,
+        *,
+        wildcard: bool = False,
         account_key_path: str | None = None,
         server_url: str | None = None,
     ) -> str:
         """Generate the account-bound persistent TXT value for ``domain``."""
         args = ["--make-dns-persist-value", "--domain", domain]
+        if wildcard:
+            args.append("--dns-persist-wildcard")
         if server_url is not None:
             args += ["--server", server_url]
         if account_key_path is not None:

@@ -87,8 +87,11 @@ class CertificateLifecycleService:
                 )
                 if existing is not None:
                     return existing
+                primary_domain = payload.domains[0]
+                dns_persist_domain = primary_domain.removeprefix("*.")
                 dns_value = await self._backend.make_dns_persist_value(
-                    payload.domains[0],
+                    dns_persist_domain,
+                    wildcard=primary_domain.startswith("*."),
                     account_key_path=_account_key_path(account),
                     server_url=account.server_url,
                 )
@@ -98,8 +101,7 @@ class CertificateLifecycleService:
                     acme_account_ref=payload.acme_account_ref,
                     dns_provider_ref=None,
                     challenge_method="dns-persist",
-                    dns_record_type="TXT",
-                    dns_record_name=f"_validation-persist.{payload.domains[0]}",
+                    dns_record_name=f"_validation-persist.{dns_persist_domain}",
                     dns_record_value=dns_value,
                     key_algorithm=payload.key_algorithm,
                     status=CertificateStatus.PENDING_DNS,

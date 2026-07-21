@@ -31,6 +31,7 @@ class _ArtifactBackend:
         self.fail_issues = False
         self.renew_calls = 0
         self.persist_value_calls = 0
+        self.persist_value_requests: list[tuple[str, bool]] = []
 
     async def register_account(self, email: str, server_url: str) -> object:
         raise NotImplementedError
@@ -38,12 +39,15 @@ class _ArtifactBackend:
     async def make_dns_persist_value(
         self,
         domain: str,
+        *,
+        wildcard: bool = False,
         account_key_path: str | None = None,
         server_url: str | None = None,
     ) -> str:
         """Return a stable, account-bound test instruction."""
         del account_key_path, server_url
         self.persist_value_calls += 1
+        self.persist_value_requests.append((domain, wildcard))
         return f"persist-value-for-{domain}"
 
     async def issue_certificate(
@@ -203,6 +207,28 @@ def test_dns_persist_lifecycle_endpoints(tmp_path: Path) -> None:
         renewed = client.post(f"/v1/certificates/{pending['id']}/renew", headers=headers)
         assert renewed.status_code == 202
         assert renewed.json()["status"] == "valid"
+
+
+def test_wildcard_dns_persist_uses_base_domain_policy(tmp_path: Path) -> None:
+    """Wildcard requests publish one base-domain TXT record with wildcard policy."""
+    app = _make_app(tmp_path)
+    backend = app.state.acme_backend
+    assert isinstance(backend, _ArtifactBackend)
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/certificates",
+            headers={"Authorization": "Bearer operator-key-12345"},
+            json={
+                "name": "wildcard-manual-cert",
+                "domains": ["*.example.com"],
+                "acme_account_ref": "letsencrypt-production",
+                "challenge_method": "dns-persist",
+            },
+        )
+
+    assert response.status_code == 202
+    assert backend.persist_value_requests == [("example.com", True)]
+    assert response.json()["challenge"]["record_name"] == "_validation-persist.example.com"
 
 
 def test_dns_persist_dns_failure_can_be_authorized_again(tmp_path: Path) -> None:

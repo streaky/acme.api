@@ -119,6 +119,18 @@ class TestDnsPersistCommands:
         assert value == "pebble.letsencrypt.org; accounturi=https://pebble:14000/my-account/123"
 
     @pytest.mark.anyio
+    async def test_make_dns_persist_wildcard_value(self, backend: AcmeShBackend) -> None:
+        """Wildcard policies are generated for the base domain."""
+        with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_run:
+            mock_run.return_value = successful_process("persist-token\n")
+
+            _ = await backend.make_dns_persist_value("example.com", wildcard=True)
+
+        call_args = mock_run.call_args.args
+        assert has_flag_pair(call_args, "--domain", "example.com")
+        assert "--dns-persist-wildcard" in call_args
+
+    @pytest.mark.anyio
     async def test_issue_certificate_dns_persist(self, backend: AcmeShBackend) -> None:
         with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_run:
             mock_run.return_value = successful_process()
