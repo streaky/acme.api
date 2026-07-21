@@ -218,6 +218,34 @@ def test_dns_persist_lifecycle_endpoints(tmp_path: Path) -> None:
     assert backend.persist_value_requests == [("example.com", True)]
 
 
+def test_dns_persist_recreation_of_revoked_request_conflicts(tmp_path: Path) -> None:
+    """Revoked DNS Persist rows cannot be mistakenly resumed as active requests."""
+    headers = {"Authorization": "Bearer operator-key-12345"}
+    payload = {
+        "name": "revoked-manual-cert",
+        "domains": ["example.com"],
+        "acme_account_ref": "letsencrypt-production",
+        "challenge_method": "dns-persist",
+    }
+    app = _make_app(tmp_path)
+    backend = app.state.acme_backend
+    assert isinstance(backend, _ArtifactBackend)
+    with TestClient(app) as client:
+        created = client.post("/v1/certificates", headers=headers, json=payload)
+        assert created.status_code == 202
+
+        revoked = client.delete(f"/v1/certificates/{created.json()['id']}", headers=headers)
+        assert revoked.status_code == 204
+
+        recreated = client.post("/v1/certificates", headers=headers, json=payload)
+
+    assert recreated.status_code == 409
+    assert recreated.json()["detail"] == (
+        "Certificate name, ACME account, and challenge method already identify another request."
+    )
+    assert backend.persist_value_requests == [("example.com", False)]
+
+
 def test_dns_persist_value_generation_errors_are_controlled(tmp_path: Path) -> None:
     """DNS Persist setup reports backend failures without creating a request."""
     headers = {"Authorization": "Bearer operator-key-12345"}

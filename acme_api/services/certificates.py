@@ -159,7 +159,11 @@ class CertificateLifecycleService:
     @staticmethod
     def _resume_or_reject(existing: Certificate, payload: CertificateCreate) -> Certificate:
         """Resume an identical DNS Persist request or reject an identity collision."""
-        if existing.challenge_method == "dns-persist" and existing.domains == payload.domains:
+        if (
+            existing.challenge_method == "dns-persist"
+            and existing.status != CertificateStatus.REVOKED
+            and existing.domains == payload.domains
+        ):
             return existing
         raise CertificateConflictError(
             "Certificate name, ACME account, and challenge method already identify another request."
