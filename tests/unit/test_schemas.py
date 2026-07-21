@@ -123,6 +123,7 @@ class TestCertificateRead:
             "key_algorithm": "ecdsa",
             "expiry_date": now.replace(year=now.year + 1),
             "status": CertificateStatus.PENDING,
+            "deployment_directory": "example.com",
             "created_at": now,
             "updated_at": now,
         }
@@ -137,6 +138,7 @@ class TestCertificateRead:
         assert cert.dns_provider_ref == data["dns_provider_ref"]
         assert cert.key_algorithm == data["key_algorithm"]
         assert cert.expiry_date == data["expiry_date"]
+        assert cert.deployment_directory == data["deployment_directory"]
         assert cert.status == CertificateStatus.PENDING
         assert cert.created_at == now
         assert cert.updated_at == now

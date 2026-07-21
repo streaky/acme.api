@@ -78,6 +78,7 @@ class CertificateRead(BaseModel):
     dns_provider_ref: str | None = None
     challenge_method: ChallengeMethod = "dns-01"
     challenge: DnsPersistChallenge | None = None
+    deployment_directory: str = Field(description="Artifact directory relative to the configured deployment root.")
     key_algorithm: str
     expiry_date: datetime | None = None
     status: CertificateStatus

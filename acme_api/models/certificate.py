@@ -9,6 +9,7 @@ import uuid as _uuid
 from sqlalchemy import JSON, DateTime, Enum, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from acme_api.deployer import deployment_directory_name
 from acme_api.models.base import Base, TimestampMixin
 
 
@@ -105,6 +106,11 @@ class Certificate(Base, TimestampMixin):
             "record_name": self.dns_record_name or "",
             "record_value": self.dns_record_value,
         }
+
+    @property
+    def deployment_directory(self) -> str:
+        """Return the artifact directory relative to the configured deployment root."""
+        return deployment_directory_name(self.domains[0])
 
     # -- key parameters -------------------------------------------------------
 

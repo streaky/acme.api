@@ -126,7 +126,9 @@ curl \
 
 ## Certificate Deployment
 
-Successful issuance and renewal deploy artifacts under the first requested domain:
+Successful issuance and renewal deploy artifacts under the `deployment_directory`
+reported by every authenticated certificate API response, relative to the configured
+deployment root. For ordinary certificates it is the first requested domain:
 
 ```text
 /certificates/example.com/
@@ -137,7 +139,15 @@ Successful issuance and renewal deploy artifacts under the first requested domai
     metadata.json
 ```
 
-Files are copied to temporary names, flushed, permissioned, and atomically renamed into place. Default permissions are `0644` for certificate files and `0600` for private keys.
+Wildcard domains use a portable filesystem-safe name: a request for
+`*.example.com` reports `deployment_directory: "wildcard.example.com"` and deploys
+under `/certificates/wildcard.example.com/`. Clients consuming the shared
+certificate volume should use this API field rather than deriving a directory name
+from the requested identifier.
+
+Files are copied to temporary names, flushed, permissioned, and atomically renamed
+into place. Default permissions are `0644` for certificate files and `0600` for
+private keys.
 
 ## Architecture
 

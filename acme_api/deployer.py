@@ -130,7 +130,7 @@ def deploy_certificate_artifacts(  # pylint: disable=too-many-arguments
 ) -> DeploymentPaths:
     """Atomically deploy certificate files under the primary domain directory."""
     primary_domain = _primary_domain(domains)
-    target_dir = deployment_root / _safe_domain_dir_name(primary_domain)
+    target_dir = deployment_root / deployment_directory_name(primary_domain)
     target_dir.mkdir(parents=True, exist_ok=True)
 
     source_paths = _source_paths(cert)
@@ -236,13 +236,17 @@ def _primary_domain(domains: list[str]) -> str:
     return domains[0]
 
 
-def _safe_domain_dir_name(domain: str) -> str:
-    """Return a safe single path segment for a domain name."""
-    if "/" in domain or "\\" in domain or domain in {"", ".", ".."}:
-        raise DeploymentError(f"unsafe primary domain for deployment: {domain!r}")
-    if domain.startswith("*."):
-        return f"wildcard.{domain[2:]}"
-    return domain
+def deployment_directory_name(primary_domain: str) -> str:
+    """Return the stable deployment directory name for a primary domain.
+
+    Wildcard labels are converted to a filesystem-safe ``wildcard.`` prefix.
+    The returned value is relative to the configured deployment root.
+    """
+    if "/" in primary_domain or "\\" in primary_domain or primary_domain in {"", ".", ".."}:
+        raise DeploymentError(f"unsafe primary domain for deployment: {primary_domain!r}")
+    if primary_domain.startswith("*."):
+        return f"wildcard.{primary_domain[2:]}"
+    return primary_domain
 
 
 def _validate_source_files(
