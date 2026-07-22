@@ -148,6 +148,30 @@ def test_deploy_wraps_consumer_directory_access_failure(tmp_path: pathlib.Path) 
             )
 
 
+
+def test_deploy_fsyncs_artifact_access_controls_after_applying_them(tmp_path: pathlib.Path) -> None:
+    """Artifact file descriptors receive group and mode changes before their final sync."""
+    cert = _write_sources(tmp_path)
+    operations: list[str] = []
+
+    def record(operation: str):
+        """Return an OS-call stand-in that records the operation name."""
+        return lambda *_args: operations.append(operation)
+
+    with (
+        patch("acme_api.deployer.os.fchown", side_effect=record("fchown")),
+        patch("acme_api.deployer.os.fchmod", side_effect=record("fchmod")),
+        patch("acme_api.deployer.os.fsync", side_effect=record("fsync")),
+    ):
+        _ = deploy_certificate_artifacts(
+            cert=cert,
+            domains=["durable.example.com"],
+            deployment_root=tmp_path / "certificates",
+            artifact_group_id=os.getgid(),
+        )
+
+    assert operations[:15] == ["fchown", "fchmod", "fsync"] * 5
+
 def test_wildcard_primary_domain_uses_safe_directory_name(tmp_path: pathlib.Path) -> None:
     """Wildcard domains are deployed to a portable directory name."""
     cert = _write_sources(tmp_path)

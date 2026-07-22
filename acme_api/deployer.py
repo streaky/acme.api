@@ -301,10 +301,11 @@ def _write_fsync_chmod(destination: Path, data: bytes, mode: int, artifact_group
     with destination.open("wb") as file_handle:
         file_handle.write(data)
         file_handle.flush()
-        os.fsync(file_handle.fileno())
-    if artifact_group_id is not None:
-        os.chown(destination, -1, artifact_group_id)
-    os.chmod(destination, mode)
+        file_descriptor = file_handle.fileno()
+        if artifact_group_id is not None:
+            os.fchown(file_descriptor, -1, artifact_group_id)
+        os.fchmod(file_descriptor, mode)
+        os.fsync(file_descriptor)
 
 
 def _fsync_directory(directory: Path) -> None:

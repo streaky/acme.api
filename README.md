@@ -167,11 +167,12 @@ separate request for the valid literal name `wildcard.example.com`. Clients
 consuming the shared certificate volume must always resolve artifact paths from
 the API's `deployment_directory` field, never derive them from the requested identifier.
 
-Files are copied to temporary names, flushed, assigned the configured group when
-`artifact_group_id` is set, permissioned, and atomically renamed into place.
-acme.api also sets the deployment root and target directory to the configured
-group with `0750` traversal mode. The same process runs for initial issuance and
-renewal, so consumers never need to repair ownership or permissions themselves.
+Files are copied to temporary names. acme.api assigns configured group and mode
+through each open file descriptor, then fsyncs the content and access-control
+metadata before atomically renaming artifacts into place. It also sets the
+deployment root and target directory to the configured group with `0750`
+traversal mode. The same process runs for initial issuance and renewal, so
+consumers never need to repair ownership or permissions themselves.
 
 ## Architecture
 
