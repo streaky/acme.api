@@ -132,20 +132,19 @@ def deploy_certificate_artifacts(  # pylint: disable=too-many-arguments
     allowed_source_roots: list[Path] | None = None,
 ) -> DeploymentPaths:
     """Atomically deploy certificate files under the primary domain directory."""
-    deployment_root.mkdir(parents=True, exist_ok=True)
-    _configure_consumer_directories(deployment_root, artifact_group_id)
-    primary_domain = _primary_domain(domains)
-    target_dir = deployment_root / deployment_directory_name(primary_domain)
-    target_dir.mkdir(parents=True, exist_ok=True)
-    _configure_consumer_directories(target_dir, artifact_group_id)
-
-    source_paths = _source_paths(cert)
-    _validate_source_files(source_paths, allowed_source_roots)
-
-    metadata = metadata or _metadata_for_cert(cert, domains, primary_domain)
-
-    temp_dir = Path(tempfile.mkdtemp(prefix=".deploy-", dir=target_dir))
+    temp_dir: Path | None = None
     try:
+        deployment_root.mkdir(parents=True, exist_ok=True)
+        _configure_consumer_directories(deployment_root, artifact_group_id)
+        primary_domain = _primary_domain(domains)
+        target_dir = deployment_root / deployment_directory_name(primary_domain)
+        target_dir.mkdir(parents=True, exist_ok=True)
+        _configure_consumer_directories(target_dir, artifact_group_id)
+
+        source_paths = _source_paths(cert)
+        _validate_source_files(source_paths, allowed_source_roots)
+        metadata = metadata or _metadata_for_cert(cert, domains, primary_domain)
+        temp_dir = Path(tempfile.mkdtemp(prefix=".deploy-", dir=target_dir))
         _write_temp_artifacts(
             temp_dir=temp_dir,
             source_paths=source_paths,
@@ -161,7 +160,8 @@ def deploy_certificate_artifacts(  # pylint: disable=too-many-arguments
     except OSError as exc:
         raise DeploymentError(f"failed to deploy certificate artifacts: {exc}") from exc
     finally:
-        shutil.rmtree(temp_dir, ignore_errors=True)
+        if temp_dir is not None:
+            shutil.rmtree(temp_dir, ignore_errors=True)
 
     return DeploymentPaths(
         directory=target_dir,

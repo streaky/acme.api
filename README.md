@@ -82,8 +82,9 @@ and `384` (`0600`) respectively.
 
 Set `deployment.artifact_group_id` only when a separate unprivileged consumer
 must read private keys. It is a numeric GID, not a group name, and acme.api must
-run with that GID as a supplementary group; otherwise deployment fails rather
-than publishing artifacts with an unexpected access policy. A typical
+run with that GID as a supplementary group. If it cannot assign the group to a
+deployment directory or artifact, issuance or renewal records a deployment
+failure rather than publishing an unexpected access policy. A typical
 shared-volume configuration uses `permissions_key: 416` (`0640`) and grants
 read-only consumers membership in the same GID. When configured, acme.api also
 sets the deployment root and per-certificate directories to that group with

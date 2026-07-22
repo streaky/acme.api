@@ -131,6 +131,23 @@ def test_deploy_group_access_normalizes_root_and_target_directories_under_restri
     assert _mode(deployed.privkey_path) == 0o640
 
 
+def test_deploy_wraps_consumer_directory_access_failure(tmp_path: pathlib.Path) -> None:
+    """Consumer-group ownership failures are recoverable deployment failures."""
+    cert = _write_sources(tmp_path)
+
+    with patch(
+        "acme_api.deployer._configure_consumer_directories",
+        side_effect=PermissionError("configured group is unavailable"),
+    ):
+        with pytest.raises(DeploymentError, match="configured group is unavailable"):
+            _ = deploy_certificate_artifacts(
+                cert=cert,
+                domains=["unreadable.example.com"],
+                deployment_root=tmp_path / "certificates",
+                artifact_group_id=10001,
+            )
+
+
 def test_wildcard_primary_domain_uses_safe_directory_name(tmp_path: pathlib.Path) -> None:
     """Wildcard domains are deployed to a portable directory name."""
     cert = _write_sources(tmp_path)
