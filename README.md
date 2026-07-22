@@ -81,11 +81,13 @@ and `permissions_key` are decimal file modes; their defaults are `420` (`0644`)
 and `384` (`0600`) respectively.
 
 Set `deployment.artifact_group_id` only when a separate unprivileged consumer
-must read deployed private keys. It is a numeric GID, not a group name. acme.api
-must run with that GID as a supplementary group; otherwise deployment fails
-rather than publishing artifacts with an unexpected access policy. A typical
+must read private keys. It is a numeric GID, not a group name, and acme.api must
+run with that GID as a supplementary group; otherwise deployment fails rather
+than publishing artifacts with an unexpected access policy. A typical
 shared-volume configuration uses `permissions_key: 416` (`0640`) and grants
-read-only consumers membership in the same GID.
+read-only consumers membership in the same GID. When configured, acme.api also
+sets the deployment root and per-certificate directories to that group with
+`0750` mode, ensuring consumers can traverse them even with a restrictive umask.
 
 Example certificate request:
 
@@ -165,9 +167,10 @@ consuming the shared certificate volume must always resolve artifact paths from
 the API's `deployment_directory` field, never derive them from the requested identifier.
 
 Files are copied to temporary names, flushed, assigned the configured group when
-`artifact_group_id` is set, permissioned, and atomically renamed into place. The
-same process runs for initial issuance and renewal, so consumers never need to
-repair ownership or permissions themselves.
+`artifact_group_id` is set, permissioned, and atomically renamed into place.
+acme.api also sets the deployment root and target directory to the configured
+group with `0750` traversal mode. The same process runs for initial issuance and
+renewal, so consumers never need to repair ownership or permissions themselves.
 
 ## Architecture
 

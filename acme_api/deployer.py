@@ -132,9 +132,12 @@ def deploy_certificate_artifacts(  # pylint: disable=too-many-arguments
     allowed_source_roots: list[Path] | None = None,
 ) -> DeploymentPaths:
     """Atomically deploy certificate files under the primary domain directory."""
+    deployment_root.mkdir(parents=True, exist_ok=True)
+    _configure_consumer_directories(deployment_root, artifact_group_id)
     primary_domain = _primary_domain(domains)
     target_dir = deployment_root / deployment_directory_name(primary_domain)
     target_dir.mkdir(parents=True, exist_ok=True)
+    _configure_consumer_directories(target_dir, artifact_group_id)
 
     source_paths = _source_paths(cert)
     _validate_source_files(source_paths, allowed_source_roots)
@@ -307,8 +310,16 @@ def _write_fsync_chmod(destination: Path, data: bytes, mode: int, artifact_group
 def _fsync_directory(directory: Path) -> None:
     """Flush directory metadata for POSIX filesystems."""
     flags = getattr(os, "O_DIRECTORY", 0)
-    fd = os.open(directory, os.O_RDONLY | flags)
+    file_descriptor = os.open(directory, os.O_RDONLY | flags)
     try:
-        os.fsync(fd)
+        os.fsync(file_descriptor)
     finally:
-        os.close(fd)
+        os.close(file_descriptor)
+
+
+def _configure_consumer_directories(directory: Path, artifact_group_id: int | None) -> None:
+    """Give a configured consumer group traversal access to a deployment directory."""
+    if artifact_group_id is None:
+        return
+    os.chown(directory, -1, artifact_group_id)
+    os.chmod(directory, 0o750)

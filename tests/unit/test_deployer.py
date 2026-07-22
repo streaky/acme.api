@@ -106,6 +106,31 @@ def test_deploy_sets_configured_artifact_group(tmp_path: pathlib.Path) -> None:
     assert _mode(deployed.privkey_path) == 0o640
 
 
+def test_deploy_group_access_normalizes_root_and_target_directories_under_restrictive_umask(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Consumers can traverse shared deployment directories regardless of service umask."""
+    cert = _write_sources(tmp_path)
+    deployment_root = tmp_path / "certificates"
+    original_umask = os.umask(0o077)
+    try:
+        deployed = deploy_certificate_artifacts(
+            cert=cert,
+            domains=["traversal.example.com"],
+            deployment_root=deployment_root,
+            permissions_key=0o640,
+            artifact_group_id=os.getgid(),
+        )
+    finally:
+        _ = os.umask(original_umask)
+
+    assert deployment_root.stat().st_gid == os.getgid()
+    assert deployed.directory.stat().st_gid == os.getgid()
+    assert _mode(deployment_root) == 0o750
+    assert _mode(deployed.directory) == 0o750
+    assert _mode(deployed.privkey_path) == 0o640
+
+
 def test_wildcard_primary_domain_uses_safe_directory_name(tmp_path: pathlib.Path) -> None:
     """Wildcard domains are deployed to a portable directory name."""
     cert = _write_sources(tmp_path)
