@@ -31,7 +31,7 @@ The compose file uses named volumes for persistent runtime state:
 | `acme-api-certificates` | `/certificates` | Atomically deployed certificate files |
 | `acme-api-acmesh` | `/acmesh` | `acme.sh` account and certificate state |
 
-The bundled compose config at `docker/config.yaml` is intentionally minimal so the service can boot for health checks. For real issuance, copy `config.example.yaml`, configure ACME accounts, DNS provider aliases, API keys, and credential file mounts, then set `ACME_API_CONFIG` to that file inside the container.
+The bundled compose config at `docker/config.yaml` is intentionally minimal so the service can boot for health checks. For real issuance, copy `config.example.yaml`, configure ACME accounts, DNS provider aliases, and credential file mounts, then set `ACME_API_CONFIG` to that file inside the container.
 
 ## Local Development
 
@@ -67,11 +67,23 @@ Development uses `uv` for locking and export verification. `make dev` follows Vu
 
 Configuration is YAML. By default the app loads `./config.yaml`; set `ACME_API_CONFIG=/path/to/config.yaml` to override it. See `config.example.yaml` for a complete reference.
 
-Certificate issuance requires an `acme_accounts` entry and a bootstrap API key in
-`api_keys`. Standard DNS-01 issuance additionally requires a configured
-`dns_providers` alias and a provider credential file readable by the container.
-DNS Persist issuance does not require either: its one-time TXT record is
-generated from the selected account.
+Certificate issuance requires an `acme_accounts` entry and an authenticated API
+client. Fresh acme.api installations intentionally create no API clients:
+
+```sh
+printf '%s' "$ADMIN_KEY" | acme-api admin initialize --key-stdin
+```
+
+This stdin-only command is the one-time local administrative trust boundary and
+can run only while the persisted API-client table is empty. It creates the
+initial `admin` client; afterward, authenticated admins create, rotate, revoke,
+and list `admin`, `operator`, and `readonly` clients at `/v1/admin/clients`.
+Configuration has no `api_keys` setting. If every admin credential is lost,
+stop the service, back up the database, and remove only the API-client records;
+preserve certificate, account, renewal, deployment, and audit rows. Standard
+DNS-01 issuance additionally requires a configured `dns_providers` alias and a
+provider credential file readable by the container. DNS Persist issuance does
+not require either: its one-time TXT record is generated from the selected account.
 
 ### Deployment configuration
 
@@ -139,6 +151,10 @@ OpenAPI is generated at `/openapi.json`; Swagger UI is available at `/docs`.
 | `GET` | `/v1/accounts` | readonly | List configured ACME accounts |
 | `GET` | `/v1/providers` | readonly | List configured DNS providers |
 | `GET` | `/v1/events` | readonly | Query audit events |
+| `GET` | `/v1/admin/clients` | admin | List safe API-client metadata |
+| `POST` | `/v1/admin/clients` | admin | Create an API client and return its credential once |
+| `POST` | `/v1/admin/clients/{id}/rotate` | admin | Rotate a client credential and return its replacement once |
+| `POST` | `/v1/admin/clients/{id}/revoke` | admin | Revoke an API client |
 
 Authenticated requests use bearer API keys:
 

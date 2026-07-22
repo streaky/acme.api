@@ -4,11 +4,15 @@ from __future__ import annotations
 
 import datetime as dt
 import uuid
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
+from acme_api.auth.hash import api_key_lookup_hash, hash_api_key
 from acme_api.backend.acmesh_errors import AcmeShError, TerminalAcmeShError, TransientAcmeShError
 from acme_api.backend.dataclasses import CertExpiry, IssuanceResult
 from acme_api.config import (
@@ -19,7 +23,9 @@ from acme_api.config import (
     DeploymentConfig,
     DnsProviderConfig,
 )
+from acme_api.db import get_db
 from acme_api.main import create_app
+from acme_api.models.api_key import APIKey, APIKeyRole
 
 
 class _ArtifactBackend:
@@ -123,13 +129,34 @@ def _make_app(tmp_path: Path) -> FastAPI:
             )
         ],
         acme_accounts=[AcmeAccountConfig(name="letsencrypt-production")],
-        api_keys={
-            "admin": "admin-key-12345",
-            "operator": "operator-key-12345",
-            "readonly": "readonly-key-12345",
-        },
     )
     app = create_app(settings=settings)
+
+    original_lifespan = app.router.lifespan_context
+
+    @asynccontextmanager
+    async def seeded_lifespan(application: FastAPI) -> AsyncGenerator[None]:
+        async with original_lifespan(application):
+            async with get_db() as session:
+                has_client = await session.scalar(select(APIKey.id).limit(1))
+                if has_client is None:
+                    for role, raw_key in (
+                        (APIKeyRole.ADMIN, "admin-key-12345"),
+                        (APIKeyRole.OPERATOR, "operator-key-12345"),
+                        (APIKeyRole.READONLY, "readonly-key-12345"),
+                    ):
+                        session.add(
+                            APIKey(
+                                name=f"test-{role.value}",
+                                hashed_key=hash_api_key(raw_key),
+                                key_lookup_hash=api_key_lookup_hash(raw_key),
+                                role=role,
+                            )
+                        )
+                    await session.commit()
+            yield
+
+    app.router.lifespan_context = seeded_lifespan
     app.state.acme_backend = _ArtifactBackend(tmp_path / "acme-artifacts")
     return app
 
@@ -431,3 +458,37 @@ def test_config_and_events_endpoints(tmp_path: Path) -> None:
         events = client.get("/v1/events?event_type=certificate.created", headers=headers)
         assert events.status_code == 200
         assert events.json()[0]["event_type"] == "certificate.created"
+
+
+def test_admin_client_management_requires_admin_and_hides_hashes(tmp_path: Path) -> None:
+    """Admins can manage all roles without exposing persisted credential hashes."""
+    with TestClient(_make_app(tmp_path)) as client:
+        admin_headers = {"Authorization": "Bearer admin-key-12345"}
+        assert client.get("/v1/admin/clients").status_code == 401
+        assert (
+            client.get("/v1/admin/clients", headers={"Authorization": "Bearer readonly-key-12345"}).status_code == 403
+        )
+
+        created = client.post(
+            "/v1/admin/clients",
+            headers=admin_headers,
+            json={"name": "inventory", "role": "readonly"},
+        )
+        assert created.status_code == 201
+        credential = created.json()["credential"]
+        assert credential
+        assert "hashed_key" not in created.json()
+        assert "key_lookup_hash" not in created.json()
+
+        client_id = created.json()["id"]
+        listed = client.get("/v1/admin/clients", headers=admin_headers)
+        assert listed.status_code == 200
+        assert all("credential" not in item for item in listed.json())
+
+        rotated = client.post(f"/v1/admin/clients/{client_id}/rotate", headers=admin_headers)
+        assert rotated.status_code == 200
+        assert rotated.json()["credential"] != credential
+
+        revoked = client.post(f"/v1/admin/clients/{client_id}/revoke", headers=admin_headers)
+        assert revoked.status_code == 200
+        assert revoked.json()["is_active"] is False

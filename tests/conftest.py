@@ -9,11 +9,32 @@ from pathlib import Path
 import pytest
 from fastapi import FastAPI
 from httpx2 import ASGITransport, AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession
 
 # Ensure the project root is on sys.path regardless of invocation directory.
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+
+
+@pytest.fixture()
+async def db(tmp_path: Path) -> AsyncGenerator[AsyncSession]:
+    """Provide an initialized isolated async database session."""
+    from acme_api.config import AcmeConfig, AppSettings, DatabaseConfig, DeploymentConfig
+    from acme_api.db import get_session_factory, init_db, init_engine
+
+    settings = AppSettings(
+        database=DatabaseConfig(url=f"sqlite+aiosqlite:///{tmp_path}/test.db"),
+        deployment=DeploymentConfig(directory=tmp_path / "certs"),
+        acme=AcmeConfig(home_dir=tmp_path / "acmesh"),
+    )
+    engine = init_engine(settings)
+    await init_db(engine)
+    try:
+        async with get_session_factory()() as session:
+            yield session
+    finally:
+        await engine.dispose()
 
 
 @pytest.fixture()

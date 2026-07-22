@@ -36,12 +36,6 @@ webhooks:
   max_retries: 3
   backoff_seconds: 1.0
 
-# Optional bootstrap API keys. Values are raw secrets read once and stored as
-# hashes in SQLite if the named bootstrap key does not already exist.
-api_keys:
-  admin: change-me-admin-key
-  operator: change-me-operator-key
-  readonly: change-me-readonly-key
 
 # DNS provider aliases referenced by name in the API.
 # Each provider must have a credentials file with acme.sh-compatible env vars.

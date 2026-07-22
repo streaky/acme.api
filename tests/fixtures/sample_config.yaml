@@ -18,7 +18,3 @@ dns_providers:
 acme_accounts:
   - name: letsencrypt-staging
     server_url: https://acme-staging-v02.api.letsencrypt.org/directory
-api_keys:
-  admin: admin-key-12345
-  operator: operator-key-12345
-  readonly: readonly-key-12345

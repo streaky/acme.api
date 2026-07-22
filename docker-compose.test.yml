@@ -19,6 +19,10 @@ services:
       context: .
       dockerfile: Dockerfile
     image: acme-api:test
+    command:
+      - /bin/sh
+      - -c
+      - "printf '%s' 'pebble-harness-admin-key' | acme-api admin initialize --key-stdin && exec acme-api"
     environment:
       ACME_API_CONFIG: /config/acme.api.test-config.yaml
       ACME_API_PORT: "8080"
