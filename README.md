@@ -87,10 +87,11 @@ deployment directory or artifact, issuance or renewal records a deployment
 failure rather than publishing an unexpected access policy. A typical
 shared-volume configuration uses `permissions_key: 416` (`0640`) and grants
 read-only consumers membership in the same GID. When configured, acme.api sets
-directories it owns to that group with `0750` mode, ensuring consumers can
-traverse them even with a restrictive umask. Pre-provisioned volume directories
-already owned by the configured GID are left unchanged, so a non-root service
-can use the volume through its supplementary group without `CAP_CHOWN`.
+directories it owns—or whose group it changes—to that group with `0750` mode,
+ensuring consumers can traverse them even with a restrictive umask.
+Pre-provisioned directories owned by another user retain their ownership and
+mode only when they already belong to the configured GID, so a non-root service
+can use an administrator-managed volume without `CAP_CHOWN`.
 
 Example certificate request:
 

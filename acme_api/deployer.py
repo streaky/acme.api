@@ -323,7 +323,8 @@ def _configure_consumer_directories(directory: Path, artifact_group_id: int | No
     if artifact_group_id is None:
         return
     directory_status = directory.stat()
-    if directory_status.st_gid != artifact_group_id:
+    group_changed = directory_status.st_gid != artifact_group_id
+    if group_changed:
         os.chown(directory, -1, artifact_group_id)
-    if directory_status.st_uid == os.geteuid():
+    if group_changed or directory_status.st_uid == os.geteuid():
         os.chmod(directory, 0o750)

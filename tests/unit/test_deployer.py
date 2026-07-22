@@ -201,6 +201,35 @@ def test_deploy_preserves_pre_provisioned_root_group(tmp_path: pathlib.Path) -> 
     chmod.assert_not_called()
 
 
+def test_deploy_sets_traversal_mode_after_changing_foreign_directory_group(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A group change makes foreign-owned directories traversable for consumers."""
+    cert = _write_sources(tmp_path)
+    deployment_root = tmp_path / "certificates"
+    deployment_root.mkdir()
+    artifact_group_id = os.getgid() + 1
+
+    with (
+        patch("acme_api.deployer.os.chown") as chown,
+        patch("acme_api.deployer.os.chmod") as chmod,
+        patch("acme_api.deployer.os.fchown"),
+        patch("acme_api.deployer.os.geteuid", return_value=os.geteuid() + 1),
+    ):
+        deployed = deploy_certificate_artifacts(
+            cert=cert,
+            domains=["foreign-owned.example.com"],
+            deployment_root=deployment_root,
+            artifact_group_id=artifact_group_id,
+        )
+
+    assert chown.call_count == 2
+    assert chmod.call_args_list == [
+        ((deployment_root, 0o750), {}),
+        ((deployed.directory, 0o750), {}),
+    ]
+
+
 def test_deploy_fsyncs_artifact_access_controls_after_applying_them(tmp_path: pathlib.Path) -> None:
     """Artifact file descriptors receive group and mode changes before their final sync."""
     cert = _write_sources(tmp_path)
