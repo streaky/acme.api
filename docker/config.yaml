@@ -27,6 +27,5 @@ webhooks:
   max_retries: 3
   backoff_seconds: 1.0
 
-api_keys: {}
 dns_providers: []
 acme_accounts: []

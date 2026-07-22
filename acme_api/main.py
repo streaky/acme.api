@@ -6,8 +6,11 @@ CLI function that launches uvicorn via the ``acme-api`` console script.
 
 from __future__ import annotations
 
+import argparse
+import asyncio
 import logging
 import os
+import sys
 import time
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
@@ -17,16 +20,16 @@ from typing import Any
 import uvicorn
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from acme_api.auth.bootstrap import seed_initial_keys
 from acme_api.backend.acmesh_backend import AcmeShBackend, _AcmeShBackendConfig
 from acme_api.config import AppSettings, load_config, prepare_runtime_paths
 from acme_api.db import get_db, get_session_factory, init_engine, run_migrations
 from acme_api.logging import setup_logging
 from acme_api.middleware import RequestIdMiddleware
 from acme_api.readiness import readiness_status
-from acme_api.routers import certificates_router, config_router, events_router
+from acme_api.routers import admin_clients_router, certificates_router, config_router, events_router
 from acme_api.scheduler import RenewalDeploymentConfig, RenewalScheduler
 from acme_api.services.certificates import CertificateLifecycleService
 from acme_api.webhooks import WebhookDeliverySettings, WebhookDispatcher
@@ -40,12 +43,7 @@ _COMMON_OPENAPI_RESPONSES: dict[int | str, dict[str, Any]] = {
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
-    """Application lifespan handler.
-
-    Configures structured logging, initializes the async DB engine, seeds API
-    keys from config on first boot, and validates settings before accepting
-    requests. On shutdown, closes all session factories cleanly.
-    """
+    """Configure runtime dependencies and close them cleanly on shutdown."""
     settings = app.state.settings
 
     prepare_runtime_paths(settings)
@@ -60,13 +58,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
 
     # Apply schema migrations before opening async application sessions.
     run_migrations(settings)
-
-    # Phase 4: initialize engine (sets up session factory) and seed API keys.
     engine = init_engine(settings)
-    async with get_db() as session:
-        created_keys = await seed_initial_keys(session, settings)
-        for key in created_keys:
-            root_logger.info("seeded api key | name=%s role=%s", key.name, key.role.value)
 
     backend = getattr(app.state, "acme_backend", None) or AcmeShBackend(
         _AcmeShBackendConfig(
@@ -149,6 +141,7 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
     app.include_router(certificates_router)
     app.include_router(config_router)
     app.include_router(events_router)
+    app.include_router(admin_clients_router)
 
     @app.get(
         "/health",
@@ -190,8 +183,59 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
     return app
 
 
+def _command_parser() -> argparse.ArgumentParser:
+    """Build the local administrative command parser."""
+    parser = argparse.ArgumentParser(prog="acme-api")
+    commands = parser.add_subparsers(dest="command")
+    admin = commands.add_parser("admin", help="Manage local administrative bootstrap.")
+    admin_commands = admin.add_subparsers(dest="admin_command")
+    initialize = admin_commands.add_parser(
+        "initialize",
+        help="Create the one permitted initial admin client from standard input.",
+    )
+    initialize.add_argument(
+        "--key-stdin",
+        action="store_true",
+        required=True,
+        help="Read the initial admin credential from standard input.",
+    )
+    return parser
+
+
+async def _initialize_admin_from_stdin() -> int:
+    """Persist the initial admin client using a credential read from standard input."""
+    from alembic.util.exc import CommandError
+
+    from acme_api.admin_clients import InitialAdminAlreadyExistsError, initialize_admin
+
+    raw_key = sys.stdin.read()
+    engine = None
+    try:
+        settings = load_config()
+        prepare_runtime_paths(settings)
+        settings.check()
+        run_migrations(settings)
+        engine = init_engine(settings)
+        async with get_db() as session:
+            await initialize_admin(session, raw_key)
+    except (CommandError, InitialAdminAlreadyExistsError, OSError, SQLAlchemyError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    finally:
+        if engine is not None:
+            await engine.dispose()
+    print("Initial admin client created.")
+    return 0
+
+
 def main() -> None:
-    """CLI entry point — loads config and launches uvicorn."""
+    """Launch the HTTP service or execute the local admin bootstrap command."""
+    args = _command_parser().parse_args()
+    if args.command == "admin":
+        if args.admin_command == "initialize":
+            raise SystemExit(asyncio.run(_initialize_admin_from_stdin()))
+        _command_parser().error("an admin command is required")
+
     settings = load_config()
     setup_logging(level=settings.log.level, format_type=settings.log.format)
     host = os.environ.get("ACME_API_HOST", "0.0.0.0")
@@ -211,7 +255,3 @@ def main() -> None:
         port=port,
         log_level=settings.log.level.lower(),
     )
-
-
-if __name__ == "__main__":
-    main()

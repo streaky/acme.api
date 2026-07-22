@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import io
+import sys
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
 from acme_api.config import (
     AcmeConfig,
@@ -14,7 +17,10 @@ from acme_api.config import (
     DatabaseConfig,
     DeploymentConfig,
 )
-from acme_api.main import create_app
+from acme_api.db import get_session_factory, init_db, init_engine
+from acme_api.main import _initialize_admin_from_stdin, create_app
+from acme_api.models.api_key import APIKey, APIKeyRole
+from acme_api.models.event import Event
 
 
 @pytest.fixture()
@@ -122,6 +128,7 @@ class TestMain:
             patch("acme_api.main.load_config", return_value=AppSettings()),
             patch("uvicorn.run") as mock_run,
             patch.dict("os.environ", {}, clear=True),
+            patch("sys.argv", ["acme-api"]),
         ):
             from acme_api.main import main
 
@@ -141,6 +148,7 @@ class TestMain:
                 {"ACME_API_HOST": "127.0.0.1", "ACME_API_PORT": "8080"},
                 clear=True,
             ),
+            patch("sys.argv", ["acme-api"]),
         ):
             from acme_api.main import main
 
@@ -149,3 +157,56 @@ class TestMain:
         call_kwargs = mock_run.call_args.kwargs
         assert call_kwargs["host"] == "127.0.0.1"
         assert call_kwargs["port"] == 8080
+
+
+class TestAdminInitializationCommand:
+    """Exercise the stdin-only local bootstrap command."""
+
+    @pytest.mark.anyio
+    async def test_rejects_invalid_stdin_credential(
+        self,
+        settings: AppSettings,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Invalid credential material exits nonzero without persisting a client."""
+
+        def skip_migrations(_: AppSettings) -> None:
+            """Avoid migration setup because validation fails before database use."""
+
+        monkeypatch.setattr("acme_api.main.load_config", lambda: settings)
+        monkeypatch.setattr("acme_api.main.run_migrations", skip_migrations)
+        monkeypatch.setattr(sys, "stdin", io.StringIO("short"))
+
+        assert await _initialize_admin_from_stdin() == 1
+
+    @pytest.mark.anyio
+    async def test_creates_initial_admin_from_stdin(
+        self,
+        settings: AppSettings,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A valid stdin credential creates the sole persisted admin client."""
+        setup_engine = init_engine(settings)
+        await init_db(setup_engine)
+        await setup_engine.dispose()
+
+        def skip_migrations(_: AppSettings) -> None:
+            """Use the initialized temporary schema."""
+
+        monkeypatch.setattr("acme_api.main.load_config", lambda: settings)
+        monkeypatch.setattr("acme_api.main.run_migrations", skip_migrations)
+        monkeypatch.setattr(sys, "stdin", io.StringIO("initial-admin-key-12345"))
+
+        assert await _initialize_admin_from_stdin() == 0
+
+        verification_engine = init_engine(settings)
+        try:
+            async with get_session_factory()() as session:
+                client = await session.scalar(select(APIKey))
+                event = await session.scalar(select(Event))
+            assert client is not None
+            assert client.role == APIKeyRole.ADMIN
+            assert event is not None
+            assert event.details == {"name": "initial-admin", "role": "admin"}
+        finally:
+            await verification_engine.dispose()

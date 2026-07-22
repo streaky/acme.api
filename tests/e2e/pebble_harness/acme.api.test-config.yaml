@@ -29,5 +29,3 @@ acme_accounts:
   - name: pebble-local
     server_url: https://pebble:14000/dir
 
-api_keys:
-  admin: pebble-harness-admin-key

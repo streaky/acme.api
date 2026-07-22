@@ -16,7 +16,7 @@ from typing import Any
 import httpx2
 import pytest
 
-#: Must match ``api_keys.admin`` in acme.api.test-config.yaml.
+#: Provisioned by the local bootstrap command in docker-compose.test.yml.
 API_KEY = "pebble-harness-admin-key"
 BASE_URL = os.environ.get("PEBBLE_API_URL", "http://acme-api-test:8080")
 RUNTIME_DIR = Path(os.environ.get("PEBBLE_RUNTIME_DIR", "/tmp/acme-api-pebble-harness"))

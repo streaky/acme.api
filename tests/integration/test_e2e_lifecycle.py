@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import datetime as dt
 import ipaddress
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -16,6 +18,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 import acme_api.main as main_module
+from acme_api.auth.hash import api_key_lookup_hash, hash_api_key
 from acme_api.backend.dataclasses import AccountInfo, CertExpiry, IssuanceResult
 from acme_api.backend.protocol import ChallengeMethod
 from acme_api.config import (
@@ -28,8 +31,9 @@ from acme_api.config import (
     RenewalConfig,
     WebhookDeliveryConfig,
 )
-from acme_api.db import get_session_factory, init_db, init_engine
+from acme_api.db import get_db, get_session_factory, init_db, init_engine
 from acme_api.main import create_app
+from acme_api.models.api_key import APIKey, APIKeyRole
 from acme_api.models.certificate import Certificate, CertificateStatus
 from acme_api.models.event import Event
 from acme_api.models.webhook import WebhookConfig
@@ -172,16 +176,36 @@ def _settings(tmp_path: Path) -> AppSettings:
             )
         ],
         acme_accounts=[AcmeAccountConfig(name="letsencrypt-staging")],
-        api_keys={
-            "admin": "admin-key-12345",
-            "operator": "operator-key-12345",
-            "readonly": "readonly-key-12345",
-        },
     )
 
 
 def _make_app(tmp_path: Path) -> FastAPI:
     app = create_app(settings=_settings(tmp_path))
+    original_lifespan = app.router.lifespan_context
+
+    @asynccontextmanager
+    async def seeded_lifespan(application: FastAPI) -> AsyncGenerator[None]:
+        async with original_lifespan(application):
+            async with get_db() as session:
+                has_client = await session.scalar(select(APIKey.id).limit(1))
+                if has_client is None:
+                    for role, raw_key in (
+                        (APIKeyRole.ADMIN, "admin-key-12345"),
+                        (APIKeyRole.OPERATOR, "operator-key-12345"),
+                        (APIKeyRole.READONLY, "readonly-key-12345"),
+                    ):
+                        session.add(
+                            APIKey(
+                                name=f"test-{role.value}",
+                                hashed_key=hash_api_key(raw_key),
+                                key_lookup_hash=api_key_lookup_hash(raw_key),
+                                role=role,
+                            )
+                        )
+                    await session.commit()
+            yield
+
+    app.router.lifespan_context = seeded_lifespan
     app.state.acme_backend = ArtifactBackend(tmp_path / "acme-artifacts")
     return app
 
