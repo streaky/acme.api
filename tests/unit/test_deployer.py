@@ -173,6 +173,34 @@ def test_deploy_wraps_out_of_range_artifact_group_id(tmp_path: pathlib.Path) -> 
             )
 
 
+def test_deploy_preserves_pre_provisioned_root_group(tmp_path: pathlib.Path) -> None:
+    """A matching volume-root group does not require ownership-changing privileges."""
+    cert = _write_sources(tmp_path)
+    deployment_root = tmp_path / "certificates"
+    deployment_root.mkdir()
+
+    with (
+        patch(
+            "acme_api.deployer.os.chown",
+            side_effect=PermissionError("ownership changes are forbidden"),
+        ) as chown,
+        patch(
+            "acme_api.deployer.os.chmod",
+            side_effect=PermissionError("mode changes are forbidden"),
+        ) as chmod,
+        patch("acme_api.deployer.os.geteuid", return_value=os.geteuid() + 1),
+    ):
+        _ = deploy_certificate_artifacts(
+            cert=cert,
+            domains=["preprovisioned.example.com"],
+            deployment_root=deployment_root,
+            artifact_group_id=os.getgid(),
+        )
+
+    chown.assert_not_called()
+    chmod.assert_not_called()
+
+
 def test_deploy_fsyncs_artifact_access_controls_after_applying_them(tmp_path: pathlib.Path) -> None:
     """Artifact file descriptors receive group and mode changes before their final sync."""
     cert = _write_sources(tmp_path)

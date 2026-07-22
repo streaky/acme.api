@@ -322,5 +322,8 @@ def _configure_consumer_directories(directory: Path, artifact_group_id: int | No
     """Give a configured consumer group traversal access to a deployment directory."""
     if artifact_group_id is None:
         return
-    os.chown(directory, -1, artifact_group_id)
-    os.chmod(directory, 0o750)
+    directory_status = directory.stat()
+    if directory_status.st_gid != artifact_group_id:
+        os.chown(directory, -1, artifact_group_id)
+    if directory_status.st_uid == os.geteuid():
+        os.chmod(directory, 0o750)
