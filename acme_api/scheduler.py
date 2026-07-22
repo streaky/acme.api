@@ -36,6 +36,7 @@ class RenewalDeploymentConfig:
     root: Path
     permissions_cert: int = 0o644
     permissions_key: int = 0o600
+    artifact_group_id: int | None = None
     allowed_source_roots: list[Path] | None = None
 
 
@@ -223,6 +224,7 @@ class RenewalScheduler:
             options=DeploymentOptions(
                 permissions_cert=self._deployment.permissions_cert,
                 permissions_key=self._deployment.permissions_key,
+                artifact_group_id=self._deployment.artifact_group_id,
                 issuer=issuer,
                 allowed_source_roots=self._deployment.allowed_source_roots,
             ),

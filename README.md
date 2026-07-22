@@ -67,10 +67,25 @@ Development uses `uv` for locking and export verification. `make dev` follows Vu
 
 Configuration is YAML. By default the app loads `./config.yaml`; set `ACME_API_CONFIG=/path/to/config.yaml` to override it. See `config.example.yaml` for a complete reference.
 
-Certificate issuance requires an `acme_accounts` entry and a bootstrap API key in `api_keys`.
-Standard DNS-01 issuance additionally requires a configured `dns_providers` alias and a
-provider credential file readable by the container. DNS Persist issuance does not require
-either: its one-time TXT record is generated from the selected account.
+Certificate issuance requires an `acme_accounts` entry and a bootstrap API key in
+`api_keys`. Standard DNS-01 issuance additionally requires a configured
+`dns_providers` alias and a provider credential file readable by the container.
+DNS Persist issuance does not require either: its one-time TXT record is
+generated from the selected account.
+
+### Deployment configuration
+
+`deployment.directory` is the artifact root. Mount it read/write only in the
+acme.api container and read-only in certificate consumers. `permissions_cert`
+and `permissions_key` are decimal file modes; their defaults are `420` (`0644`)
+and `384` (`0600`) respectively.
+
+Set `deployment.artifact_group_id` only when a separate unprivileged consumer
+must read deployed private keys. It is a numeric GID, not a group name. acme.api
+must run with that GID as a supplementary group; otherwise deployment fails
+rather than publishing artifacts with an unexpected access policy. A typical
+shared-volume configuration uses `permissions_key: 416` (`0640`) and grants
+read-only consumers membership in the same GID.
 
 Example certificate request:
 
@@ -149,9 +164,10 @@ separate request for the valid literal name `wildcard.example.com`. Clients
 consuming the shared certificate volume must always resolve artifact paths from
 the API's `deployment_directory` field, never derive them from the requested identifier.
 
-Files are copied to temporary names, flushed, permissioned, and atomically renamed
-into place. Default permissions are `0644` for certificate files and `0600` for
-private keys.
+Files are copied to temporary names, flushed, assigned the configured group when
+`artifact_group_id` is set, permissioned, and atomically renamed into place. The
+same process runs for initial issuance and renewal, so consumers never need to
+repair ownership or permissions themselves.
 
 ## Architecture
 

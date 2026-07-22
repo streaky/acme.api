@@ -249,6 +249,7 @@ class CertificateLifecycleService:
                 options=DeploymentOptions(
                     permissions_cert=self._settings.deployment.permissions_cert,
                     permissions_key=self._settings.deployment.permissions_key,
+                    artifact_group_id=self._settings.deployment.artifact_group_id,
                     issuer=certificate.acme_account_ref,
                     allowed_source_roots=(
                         [self._settings.acme.home_dir] if isinstance(self._backend, AcmeShBackend) else None

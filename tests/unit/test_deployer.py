@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import pathlib
 import stat
 from datetime import UTC, datetime
@@ -87,6 +88,22 @@ def test_deploy_sets_certificate_and_key_permissions(tmp_path: pathlib.Path) -> 
     assert _mode(deployed.fullchain_path) == 0o644
     assert _mode(deployed.metadata_path) == 0o644
     assert _mode(deployed.privkey_path) == 0o600
+
+
+def test_deploy_sets_configured_artifact_group(tmp_path: pathlib.Path) -> None:
+    """Deployment applies the configured consumer group before publication."""
+    cert = _write_sources(tmp_path)
+
+    deployed = deploy_certificate_artifacts(
+        cert=cert,
+        domains=["group.example.com"],
+        deployment_root=tmp_path / "certificates",
+        permissions_key=0o640,
+        artifact_group_id=os.getgid(),
+    )
+
+    assert deployed.privkey_path.stat().st_gid == os.getgid()
+    assert _mode(deployed.privkey_path) == 0o640
 
 
 def test_wildcard_primary_domain_uses_safe_directory_name(tmp_path: pathlib.Path) -> None:

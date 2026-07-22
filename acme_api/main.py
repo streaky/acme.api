@@ -98,6 +98,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
             root=settings.deployment.directory,
             permissions_cert=settings.deployment.permissions_cert,
             permissions_key=settings.deployment.permissions_key,
+            artifact_group_id=settings.deployment.artifact_group_id,
             allowed_source_roots=([settings.acme.home_dir] if isinstance(backend, AcmeShBackend) else None),
         ),
     )

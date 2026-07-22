@@ -69,6 +69,7 @@ class DeploymentOptions:
 
     permissions_cert: int = 0o644
     permissions_key: int = 0o600
+    artifact_group_id: int | None = None
     issuer: str | None = None
     allowed_source_roots: list[Path] | None = None
 
@@ -114,6 +115,7 @@ def deploy_issuance_result(
         metadata=metadata,
         permissions_cert=options.permissions_cert,
         permissions_key=options.permissions_key,
+        artifact_group_id=options.artifact_group_id,
         allowed_source_roots=options.allowed_source_roots,
     )
 
@@ -126,6 +128,7 @@ def deploy_certificate_artifacts(  # pylint: disable=too-many-arguments
     metadata: DeploymentMetadata | None = None,
     permissions_cert: int = 0o644,
     permissions_key: int = 0o600,
+    artifact_group_id: int | None = None,
     allowed_source_roots: list[Path] | None = None,
 ) -> DeploymentPaths:
     """Atomically deploy certificate files under the primary domain directory."""
@@ -146,6 +149,7 @@ def deploy_certificate_artifacts(  # pylint: disable=too-many-arguments
             metadata=metadata,
             permissions_cert=permissions_cert,
             permissions_key=permissions_key,
+            artifact_group_id=artifact_group_id,
         )
         _fsync_directory(temp_dir)
 
@@ -166,6 +170,7 @@ def deploy_certificate_artifacts(  # pylint: disable=too-many-arguments
     )
 
 
+# pylint: disable-next=too-many-arguments  # Atomic staging needs explicit artifact access controls.
 def _write_temp_artifacts(
     *,
     temp_dir: Path,
@@ -173,11 +178,12 @@ def _write_temp_artifacts(
     metadata: DeploymentMetadata,
     permissions_cert: int,
     permissions_key: int,
+    artifact_group_id: int | None,
 ) -> None:
     """Write all deployment artifacts into the temporary directory."""
     for file_name, source_path in source_paths.items():
         mode = permissions_key if file_name == PRIVKEY_FILE_NAME else permissions_cert
-        _copy_fsync_chmod(source_path, temp_dir / f"{file_name}.tmp", mode)
+        _copy_fsync_chmod(source_path, temp_dir / f"{file_name}.tmp", mode, artifact_group_id)
 
     metadata_bytes = json.dumps(
         metadata.to_json_dict(),
@@ -188,6 +194,7 @@ def _write_temp_artifacts(
         temp_dir / f"{METADATA_FILE_NAME}.tmp",
         metadata_bytes,
         permissions_cert,
+        artifact_group_id,
     )
 
 
@@ -280,18 +287,20 @@ def _validate_source_files(
         raise DeploymentError("unsafe certificate source artifact(s): " + ", ".join(unsafe))
 
 
-def _copy_fsync_chmod(source: Path, destination: Path, mode: int) -> None:
-    """Copy a source file to destination, flush it, fsync it, and chmod it."""
+def _copy_fsync_chmod(source: Path, destination: Path, mode: int, artifact_group_id: int | None) -> None:
+    """Copy a source file to destination, flush it, fsync it, and apply access controls."""
     with source.open("rb") as src:
-        _write_fsync_chmod(destination, src.read(), mode)
+        _write_fsync_chmod(destination, src.read(), mode, artifact_group_id)
 
 
-def _write_fsync_chmod(destination: Path, data: bytes, mode: int) -> None:
-    """Write bytes durably to a destination path with the requested mode."""
+def _write_fsync_chmod(destination: Path, data: bytes, mode: int, artifact_group_id: int | None) -> None:
+    """Write bytes durably to a destination path with the requested access controls."""
     with destination.open("wb") as file_handle:
         file_handle.write(data)
         file_handle.flush()
         os.fsync(file_handle.fileno())
+    if artifact_group_id is not None:
+        os.chown(destination, -1, artifact_group_id)
     os.chmod(destination, mode)
 
 

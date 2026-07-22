@@ -44,6 +44,7 @@ class TestDeploymentConfig:
     def test_defaults(self) -> None:
         cfg = DeploymentConfig()
         assert cfg.directory == Path("/certificates")
+        assert cfg.artifact_group_id is None
 
     def test_custom_directory(self) -> None:
         cfg = DeploymentConfig(directory=Path("/mnt/certs"))
