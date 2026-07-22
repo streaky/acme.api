@@ -156,6 +156,23 @@ def test_deploy_wraps_consumer_directory_access_failure(tmp_path: pathlib.Path) 
             )
 
 
+def test_deploy_wraps_out_of_range_artifact_group_id(tmp_path: pathlib.Path) -> None:
+    """Out-of-range consumer groups become recoverable deployment failures."""
+    cert = _write_sources(tmp_path)
+
+    with patch(
+        "acme_api.deployer.os.chown",
+        side_effect=OverflowError("gid is out of range"),
+    ):
+        with pytest.raises(DeploymentError, match="gid is out of range"):
+            _ = deploy_certificate_artifacts(
+                cert=cert,
+                domains=["unreadable.example.com"],
+                deployment_root=tmp_path / "certificates",
+                artifact_group_id=2**100,
+            )
+
+
 def test_deploy_fsyncs_artifact_access_controls_after_applying_them(tmp_path: pathlib.Path) -> None:
     """Artifact file descriptors receive group and mode changes before their final sync."""
     cert = _write_sources(tmp_path)

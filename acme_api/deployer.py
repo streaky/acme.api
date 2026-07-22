@@ -157,7 +157,7 @@ def deploy_certificate_artifacts(  # pylint: disable=too-many-arguments
 
         _replace_artifacts(temp_dir, target_dir)
         _fsync_directory(target_dir)
-    except OSError as exc:
+    except (OSError, OverflowError) as exc:
         raise DeploymentError(f"failed to deploy certificate artifacts: {exc}") from exc
     finally:
         if temp_dir is not None:
