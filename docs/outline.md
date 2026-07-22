@@ -265,6 +265,10 @@ Recommended process:
 
 Consumers never observe partially-written certificates.
 
+Deployments can optionally assign artifacts to a configured consumer group. The
+service must belong to that numeric group; private keys should use group-readable
+`0640` mode while consumers mount the shared certificate storage read-only.
+
 ---
 
 # Webhooks

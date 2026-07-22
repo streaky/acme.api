@@ -69,6 +69,7 @@ class DeploymentOptions:
 
     permissions_cert: int = 0o644
     permissions_key: int = 0o600
+    artifact_group_id: int | None = None
     issuer: str | None = None
     allowed_source_roots: list[Path] | None = None
 
@@ -114,6 +115,7 @@ def deploy_issuance_result(
         metadata=metadata,
         permissions_cert=options.permissions_cert,
         permissions_key=options.permissions_key,
+        artifact_group_id=options.artifact_group_id,
         allowed_source_roots=options.allowed_source_roots,
     )
 
@@ -126,35 +128,40 @@ def deploy_certificate_artifacts(  # pylint: disable=too-many-arguments
     metadata: DeploymentMetadata | None = None,
     permissions_cert: int = 0o644,
     permissions_key: int = 0o600,
+    artifact_group_id: int | None = None,
     allowed_source_roots: list[Path] | None = None,
 ) -> DeploymentPaths:
     """Atomically deploy certificate files under the primary domain directory."""
-    primary_domain = _primary_domain(domains)
-    target_dir = deployment_root / deployment_directory_name(primary_domain)
-    target_dir.mkdir(parents=True, exist_ok=True)
-
-    source_paths = _source_paths(cert)
-    _validate_source_files(source_paths, allowed_source_roots)
-
-    metadata = metadata or _metadata_for_cert(cert, domains, primary_domain)
-
-    temp_dir = Path(tempfile.mkdtemp(prefix=".deploy-", dir=target_dir))
+    temp_dir: Path | None = None
     try:
+        deployment_root.mkdir(parents=True, exist_ok=True)
+        _configure_consumer_directories(deployment_root, artifact_group_id)
+        primary_domain = _primary_domain(domains)
+        target_dir = deployment_root / deployment_directory_name(primary_domain)
+        target_dir.mkdir(parents=True, exist_ok=True)
+        _configure_consumer_directories(target_dir, artifact_group_id)
+
+        source_paths = _source_paths(cert)
+        _validate_source_files(source_paths, allowed_source_roots)
+        metadata = metadata or _metadata_for_cert(cert, domains, primary_domain)
+        temp_dir = Path(tempfile.mkdtemp(prefix=".deploy-", dir=target_dir))
         _write_temp_artifacts(
             temp_dir=temp_dir,
             source_paths=source_paths,
             metadata=metadata,
             permissions_cert=permissions_cert,
             permissions_key=permissions_key,
+            artifact_group_id=artifact_group_id,
         )
         _fsync_directory(temp_dir)
 
         _replace_artifacts(temp_dir, target_dir)
         _fsync_directory(target_dir)
-    except OSError as exc:
+    except (OSError, OverflowError) as exc:
         raise DeploymentError(f"failed to deploy certificate artifacts: {exc}") from exc
     finally:
-        shutil.rmtree(temp_dir, ignore_errors=True)
+        if temp_dir is not None:
+            shutil.rmtree(temp_dir, ignore_errors=True)
 
     return DeploymentPaths(
         directory=target_dir,
@@ -166,6 +173,7 @@ def deploy_certificate_artifacts(  # pylint: disable=too-many-arguments
     )
 
 
+# pylint: disable-next=too-many-arguments  # Atomic staging needs explicit artifact access controls.
 def _write_temp_artifacts(
     *,
     temp_dir: Path,
@@ -173,11 +181,12 @@ def _write_temp_artifacts(
     metadata: DeploymentMetadata,
     permissions_cert: int,
     permissions_key: int,
+    artifact_group_id: int | None,
 ) -> None:
     """Write all deployment artifacts into the temporary directory."""
     for file_name, source_path in source_paths.items():
         mode = permissions_key if file_name == PRIVKEY_FILE_NAME else permissions_cert
-        _copy_fsync_chmod(source_path, temp_dir / f"{file_name}.tmp", mode)
+        _copy_fsync_chmod(source_path, temp_dir / f"{file_name}.tmp", mode, artifact_group_id)
 
     metadata_bytes = json.dumps(
         metadata.to_json_dict(),
@@ -188,6 +197,7 @@ def _write_temp_artifacts(
         temp_dir / f"{METADATA_FILE_NAME}.tmp",
         metadata_bytes,
         permissions_cert,
+        artifact_group_id,
     )
 
 
@@ -280,26 +290,41 @@ def _validate_source_files(
         raise DeploymentError("unsafe certificate source artifact(s): " + ", ".join(unsafe))
 
 
-def _copy_fsync_chmod(source: Path, destination: Path, mode: int) -> None:
-    """Copy a source file to destination, flush it, fsync it, and chmod it."""
+def _copy_fsync_chmod(source: Path, destination: Path, mode: int, artifact_group_id: int | None) -> None:
+    """Copy a source file to destination, flush it, fsync it, and apply access controls."""
     with source.open("rb") as src:
-        _write_fsync_chmod(destination, src.read(), mode)
+        _write_fsync_chmod(destination, src.read(), mode, artifact_group_id)
 
 
-def _write_fsync_chmod(destination: Path, data: bytes, mode: int) -> None:
-    """Write bytes durably to a destination path with the requested mode."""
+def _write_fsync_chmod(destination: Path, data: bytes, mode: int, artifact_group_id: int | None) -> None:
+    """Write bytes durably to a destination path with the requested access controls."""
     with destination.open("wb") as file_handle:
         file_handle.write(data)
         file_handle.flush()
-        os.fsync(file_handle.fileno())
-    os.chmod(destination, mode)
+        file_descriptor = file_handle.fileno()
+        if artifact_group_id is not None:
+            os.fchown(file_descriptor, -1, artifact_group_id)
+        os.fchmod(file_descriptor, mode)
+        os.fsync(file_descriptor)
 
 
 def _fsync_directory(directory: Path) -> None:
     """Flush directory metadata for POSIX filesystems."""
     flags = getattr(os, "O_DIRECTORY", 0)
-    fd = os.open(directory, os.O_RDONLY | flags)
+    file_descriptor = os.open(directory, os.O_RDONLY | flags)
     try:
-        os.fsync(fd)
+        os.fsync(file_descriptor)
     finally:
-        os.close(fd)
+        os.close(file_descriptor)
+
+
+def _configure_consumer_directories(directory: Path, artifact_group_id: int | None) -> None:
+    """Give a configured consumer group traversal access to a deployment directory."""
+    if artifact_group_id is None:
+        return
+    directory_status = directory.stat()
+    group_changed = directory_status.st_gid != artifact_group_id
+    if group_changed:
+        os.chown(directory, -1, artifact_group_id)
+    if group_changed or directory_status.st_uid == os.geteuid():
+        os.chmod(directory, 0o750)

@@ -42,6 +42,7 @@ class DeploymentConfig(StrictConfigModel):
     directory: Path = Path("/certificates")
     permissions_cert: int = 0o644
     permissions_key: int = 0o600
+    artifact_group_id: int | None = Field(default=None, ge=0)
 
 
 class DnsProviderConfig(StrictConfigModel):

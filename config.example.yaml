@@ -11,9 +11,14 @@ database:
   pool_size: 5
 
 deployment:
+  # Directory mounted read/write only by acme.api. Consumers should mount it read-only.
   directory: /certificates
   permissions_cert: 420 # 0o644 in decimal
   permissions_key: 384 # 0o600 in decimal
+  # Optional numeric supplementary group for read-only certificate consumers.
+  # acme.api applies it to the root and each deployment directory with mode 0750,
+  # so members can traverse restrictive-umask deployments.
+  # artifact_group_id: 10001
 
 acme:
   binary_path: /usr/local/bin/acme.sh

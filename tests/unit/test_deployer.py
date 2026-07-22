@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import os
 import pathlib
 import stat
+from collections.abc import Callable
 from datetime import UTC, datetime
 from unittest.mock import patch
 
@@ -87,6 +89,169 @@ def test_deploy_sets_certificate_and_key_permissions(tmp_path: pathlib.Path) -> 
     assert _mode(deployed.fullchain_path) == 0o644
     assert _mode(deployed.metadata_path) == 0o644
     assert _mode(deployed.privkey_path) == 0o600
+
+
+def test_deploy_sets_configured_artifact_group(tmp_path: pathlib.Path) -> None:
+    """Deployment applies the configured consumer group before publication."""
+    cert = _write_sources(tmp_path)
+
+    deployed = deploy_certificate_artifacts(
+        cert=cert,
+        domains=["group.example.com"],
+        deployment_root=tmp_path / "certificates",
+        permissions_key=0o640,
+        artifact_group_id=os.getgid(),
+    )
+
+    deployed_artifacts: tuple[pathlib.Path, ...] = (
+        deployed.cert_path,
+        deployed.chain_path,
+        deployed.fullchain_path,
+        deployed.privkey_path,
+        deployed.metadata_path,
+    )
+    assert all(path.stat().st_gid == os.getgid() for path in deployed_artifacts)
+    assert _mode(deployed.privkey_path) == 0o640
+
+
+def test_deploy_group_access_normalizes_root_and_target_directories_under_restrictive_umask(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Consumers can traverse shared deployment directories regardless of service umask."""
+    cert = _write_sources(tmp_path)
+    deployment_root = tmp_path / "certificates"
+    original_umask = os.umask(0o077)
+    try:
+        deployed = deploy_certificate_artifacts(
+            cert=cert,
+            domains=["traversal.example.com"],
+            deployment_root=deployment_root,
+            permissions_key=0o640,
+            artifact_group_id=os.getgid(),
+        )
+    finally:
+        _ = os.umask(original_umask)
+
+    assert deployment_root.stat().st_gid == os.getgid()
+    assert deployed.directory.stat().st_gid == os.getgid()
+    assert _mode(deployment_root) == 0o750
+    assert _mode(deployed.directory) == 0o750
+    assert _mode(deployed.privkey_path) == 0o640
+
+
+def test_deploy_wraps_consumer_directory_access_failure(tmp_path: pathlib.Path) -> None:
+    """Consumer-group ownership failures are recoverable deployment failures."""
+    cert = _write_sources(tmp_path)
+
+    with patch(
+        "acme_api.deployer._configure_consumer_directories",
+        side_effect=PermissionError("configured group is unavailable"),
+    ):
+        with pytest.raises(DeploymentError, match="configured group is unavailable"):
+            _ = deploy_certificate_artifacts(
+                cert=cert,
+                domains=["unreadable.example.com"],
+                deployment_root=tmp_path / "certificates",
+                artifact_group_id=10001,
+            )
+
+
+def test_deploy_wraps_out_of_range_artifact_group_id(tmp_path: pathlib.Path) -> None:
+    """Out-of-range consumer groups become recoverable deployment failures."""
+    cert = _write_sources(tmp_path)
+
+    with patch(
+        "acme_api.deployer.os.chown",
+        side_effect=OverflowError("gid is out of range"),
+    ):
+        with pytest.raises(DeploymentError, match="gid is out of range"):
+            _ = deploy_certificate_artifacts(
+                cert=cert,
+                domains=["unreadable.example.com"],
+                deployment_root=tmp_path / "certificates",
+                artifact_group_id=2**100,
+            )
+
+
+def test_deploy_preserves_pre_provisioned_root_group(tmp_path: pathlib.Path) -> None:
+    """A matching volume-root group does not require ownership-changing privileges."""
+    cert = _write_sources(tmp_path)
+    deployment_root = tmp_path / "certificates"
+    deployment_root.mkdir()
+
+    with (
+        patch(
+            "acme_api.deployer.os.chown",
+            side_effect=PermissionError("ownership changes are forbidden"),
+        ) as chown,
+        patch(
+            "acme_api.deployer.os.chmod",
+            side_effect=PermissionError("mode changes are forbidden"),
+        ) as chmod,
+        patch("acme_api.deployer.os.geteuid", return_value=os.geteuid() + 1),
+    ):
+        _ = deploy_certificate_artifacts(
+            cert=cert,
+            domains=["preprovisioned.example.com"],
+            deployment_root=deployment_root,
+            artifact_group_id=os.getgid(),
+        )
+
+    chown.assert_not_called()
+    chmod.assert_not_called()
+
+
+def test_deploy_sets_traversal_mode_after_changing_foreign_directory_group(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A group change makes foreign-owned directories traversable for consumers."""
+    cert = _write_sources(tmp_path)
+    deployment_root = tmp_path / "certificates"
+    deployment_root.mkdir()
+    artifact_group_id = os.getgid() + 1
+
+    with (
+        patch("acme_api.deployer.os.chown") as chown,
+        patch("acme_api.deployer.os.chmod") as chmod,
+        patch("acme_api.deployer.os.fchown"),
+        patch("acme_api.deployer.os.geteuid", return_value=os.geteuid() + 1),
+    ):
+        deployed = deploy_certificate_artifacts(
+            cert=cert,
+            domains=["foreign-owned.example.com"],
+            deployment_root=deployment_root,
+            artifact_group_id=artifact_group_id,
+        )
+
+    assert chown.call_count == 2
+    assert chmod.call_args_list == [
+        ((deployment_root, 0o750), {}),
+        ((deployed.directory, 0o750), {}),
+    ]
+
+
+def test_deploy_fsyncs_artifact_access_controls_after_applying_them(tmp_path: pathlib.Path) -> None:
+    """Artifact file descriptors receive group and mode changes before their final sync."""
+    cert = _write_sources(tmp_path)
+    operations: list[str] = []
+
+    def record(operation: str) -> Callable[..., None]:
+        """Return an OS-call stand-in that records the operation name."""
+        return lambda *_args: operations.append(operation)
+
+    with (
+        patch("acme_api.deployer.os.fchown", side_effect=record("fchown")),
+        patch("acme_api.deployer.os.fchmod", side_effect=record("fchmod")),
+        patch("acme_api.deployer.os.fsync", side_effect=record("fsync")),
+    ):
+        _ = deploy_certificate_artifacts(
+            cert=cert,
+            domains=["durable.example.com"],
+            deployment_root=tmp_path / "certificates",
+            artifact_group_id=os.getgid(),
+        )
+
+    assert operations[:15] == ["fchown", "fchmod", "fsync"] * 5
 
 
 def test_wildcard_primary_domain_uses_safe_directory_name(tmp_path: pathlib.Path) -> None:
