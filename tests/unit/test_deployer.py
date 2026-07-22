@@ -6,6 +6,7 @@ import json
 import os
 import pathlib
 import stat
+from collections.abc import Callable
 from datetime import UTC, datetime
 from unittest.mock import patch
 
@@ -102,7 +103,14 @@ def test_deploy_sets_configured_artifact_group(tmp_path: pathlib.Path) -> None:
         artifact_group_id=os.getgid(),
     )
 
-    assert deployed.privkey_path.stat().st_gid == os.getgid()
+    deployed_artifacts: tuple[pathlib.Path, ...] = (
+        deployed.cert_path,
+        deployed.chain_path,
+        deployed.fullchain_path,
+        deployed.privkey_path,
+        deployed.metadata_path,
+    )
+    assert all(path.stat().st_gid == os.getgid() for path in deployed_artifacts)
     assert _mode(deployed.privkey_path) == 0o640
 
 
@@ -148,13 +156,12 @@ def test_deploy_wraps_consumer_directory_access_failure(tmp_path: pathlib.Path) 
             )
 
 
-
 def test_deploy_fsyncs_artifact_access_controls_after_applying_them(tmp_path: pathlib.Path) -> None:
     """Artifact file descriptors receive group and mode changes before their final sync."""
     cert = _write_sources(tmp_path)
     operations: list[str] = []
 
-    def record(operation: str):
+    def record(operation: str) -> Callable[..., None]:
         """Return an OS-call stand-in that records the operation name."""
         return lambda *_args: operations.append(operation)
 
@@ -171,6 +178,7 @@ def test_deploy_fsyncs_artifact_access_controls_after_applying_them(tmp_path: pa
         )
 
     assert operations[:15] == ["fchown", "fchmod", "fsync"] * 5
+
 
 def test_wildcard_primary_domain_uses_safe_directory_name(tmp_path: pathlib.Path) -> None:
     """Wildcard domains are deployed to a portable directory name."""
