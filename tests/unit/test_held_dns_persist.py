@@ -95,6 +95,19 @@ def test_held_dns_persist_survives_restart_and_can_cancel(tmp_path: Path) -> Non
         cancelled = client.delete(f"/v1/certificates/{certificate_id}", headers=headers)
         assert cancelled.status_code == 204
         assert client.get(f"/v1/certificates/{certificate_id}", headers=headers).json()["status"] == "cancelled"
+        duplicate = client.post(
+            "/v1/certificates",
+            headers=headers,
+            json={
+                "name": "restart-held-cert",
+                "domains": ["example.com"],
+                "acme_account_ref": "letsencrypt-production",
+                "challenge_method": "dns-persist",
+                "held": True,
+            },
+        )
+        assert duplicate.status_code == 409
+        assert backend.issue_calls == 0
 
 
 def test_restart_resumes_held_issuance_interrupted_after_claim(tmp_path: Path) -> None:

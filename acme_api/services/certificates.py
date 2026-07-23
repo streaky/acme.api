@@ -162,7 +162,7 @@ class CertificateLifecycleService:
         """Resume an identical DNS Persist request or reject an identity collision."""
         if (
             existing.challenge_method == "dns-persist"
-            and existing.status != CertificateStatus.REVOKED
+            and existing.status not in (CertificateStatus.REVOKED, CertificateStatus.CANCELLED)
             and existing.domains == payload.domains
         ):
             return existing
