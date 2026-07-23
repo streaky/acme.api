@@ -102,6 +102,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         scheduler=renewal_scheduler,
         webhook_dispatcher_factory=webhook_dispatcher_factory,
     )
+    await app.state.certificate_service.resume_released_dns_persist_certificates()
     await renewal_scheduler.start()
 
     try:

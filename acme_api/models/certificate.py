@@ -18,10 +18,14 @@ class CertificateStatus(enum.StrEnum):
 
     PENDING = "pending"
     PENDING_DNS = "pending_dns"
+    HELD = "held"
+    AUTHORIZATION_READY = "authorization_ready"
+    RELEASED = "released"
     ISSUING = "issuing"
     VALID = "valid"
     RENEWING = "renewing"
     FAILED = "failed"
+    CANCELLED = "cancelled"
     REVOKED = "revoked"
 
 
@@ -141,6 +145,17 @@ class Certificate(Base, TimestampMixin):
         default=CertificateStatus.PENDING,
         nullable=False,
         doc="Current lifecycle state of the certificate.",
+    )
+
+    revision: Mapped[int] = mapped_column(
+        default=1,
+        nullable=False,
+        doc="Monotonically increasing revision for held-request release concurrency.",
+    )
+    release_idempotency_key: Mapped[str | None] = mapped_column(
+        String(255),
+        nullable=True,
+        doc="Idempotency key used to release a held DNS Persist request.",
     )
 
     # -- relationships --------------------------------------------------------

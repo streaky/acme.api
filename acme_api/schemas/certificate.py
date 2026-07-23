@@ -18,10 +18,14 @@ class CertificateStatus(StrEnum):
 
     PENDING = "pending"
     PENDING_DNS = "pending_dns"
+    HELD = "held"
+    AUTHORIZATION_READY = "authorization_ready"
+    RELEASED = "released"
     ISSUING = "issuing"
     VALID = "valid"
     RENEWING = "renewing"
     FAILED = "failed"
+    CANCELLED = "cancelled"
     REVOKED = "revoked"
 
 
@@ -42,6 +46,7 @@ class CertificateCreate(BaseModel):
     challenge_method: ChallengeMethod = "dns-01"
     dns_provider_ref: str | None = None
     key_algorithm: CertificateKeyAlgorithm = "ecdsa"
+    held: bool = False
 
     @field_validator("domains")
     @classmethod
@@ -57,6 +62,12 @@ class CertificateCreate(BaseModel):
                 raise ValueError(f"Domain {domain!r} exceeds maximum length of {_MAX_FQDN_LENGTH} characters.")
         primary_domain = normalized_domains[0]
         return [primary_domain, *sorted(set(normalized_domains[1:]) - {primary_domain})]
+
+
+class CertificateRelease(BaseModel):
+    """Optimistic-concurrency input for releasing a held certificate request."""
+
+    revision: int = Field(ge=1)
 
 
 class DnsPersistChallenge(BaseModel):
@@ -84,6 +95,7 @@ class CertificateRead(BaseModel):
     key_algorithm: str
     expiry_date: datetime | None = None
     status: CertificateStatus
+    revision: int = 1
     created_at: datetime
     updated_at: datetime
 
