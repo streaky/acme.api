@@ -437,7 +437,16 @@ class CertificateLifecycleService:
         certificate: Certificate,
         error: Exception,
     ) -> None:
-        certificate.status = CertificateStatus.FAILED
+        transition = await session.execute(
+            update(Certificate)
+            .where(Certificate.id == certificate.id, Certificate.status == CertificateStatus.ISSUING)
+            .values(status=CertificateStatus.FAILED)
+            .returning(Certificate.id)
+        )
+        if transition.scalar_one_or_none() is None:
+            await session.rollback()
+            return
+        await session.refresh(certificate)
         await self._record_event(
             session,
             certificate,
