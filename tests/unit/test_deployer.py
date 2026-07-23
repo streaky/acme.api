@@ -16,8 +16,11 @@ from acme_api.backend.dataclasses import CertExpiry, IssuanceResult
 from acme_api.deployer import (
     DeploymentError,
     DeploymentOptions,
+    cleanup_generations,
     deploy_certificate_artifacts,
     deploy_issuance_result,
+    pin_generation,
+    select_generation,
 )
 
 
@@ -383,3 +386,72 @@ def test_custom_permissions_are_honored(tmp_path: pathlib.Path) -> None:
 
     assert _mode(deployed.cert_path) == 0o640
     assert _mode(deployed.privkey_path) == 0o400
+
+
+def test_generation_deployments_are_immutable_and_update_compatibility_paths(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A generation switch exposes a complete selected pair at compatibility paths."""
+    cert = _write_sources(tmp_path)
+    root = tmp_path / "certificates"
+    first = deploy_certificate_artifacts(
+        cert=cert, domains=["example.com"], deployment_root=root, generation_aware=True
+    )
+    source_dir = pathlib.Path(cert.cert_path).parent
+    (source_dir / "fullchain.pem").write_bytes(b"replacement-chain\n")
+    (source_dir / "privkey.pem").write_bytes(b"replacement-key\n")
+    second = deploy_certificate_artifacts(
+        cert=cert, domains=["example.com"], deployment_root=root, generation_aware=True
+    )
+
+    target = root / "example.com"
+    assert first.generation_id != second.generation_id
+    assert first.fullchain_path.read_bytes() == b"server-cert\nca-chain\n"
+    assert second.fullchain_path.read_bytes() == b"replacement-chain\n"
+    assert (target / "fullchain.pem").read_bytes() == b"replacement-chain\n"
+    assert (target / "privkey.pem").read_bytes() == b"replacement-key\n"
+    assert (target / "current").is_symlink()
+
+
+def test_selecting_retained_generation_restores_exact_compatibility_bytes(tmp_path: pathlib.Path) -> None:
+    """Selecting a retained predecessor atomically restores its published files."""
+    cert = _write_sources(tmp_path)
+    root = tmp_path / "certificates"
+    first = deploy_certificate_artifacts(
+        cert=cert, domains=["example.com"], deployment_root=root, generation_aware=True
+    )
+    pathlib.Path(cert.fullchain_path).write_bytes(b"replacement-chain\n")
+    second = deploy_certificate_artifacts(
+        cert=cert, domains=["example.com"], deployment_root=root, generation_aware=True
+    )
+
+    restored = select_generation(root / "example.com", first.generation_id or "")
+
+    assert restored.generation_id == first.generation_id
+    assert (root / "example.com" / "fullchain.pem").read_bytes() == first.fullchain_path.read_bytes()
+    assert second.fullchain_path.read_bytes() == b"replacement-chain\n"
+
+
+def test_generation_cleanup_preserves_current_and_pinned_generations(tmp_path: pathlib.Path) -> None:
+    """Retention never deletes the current generation or an explicit pin."""
+    cert = _write_sources(tmp_path)
+    root = tmp_path / "certificates"
+    first = deploy_certificate_artifacts(
+        cert=cert, domains=["example.com"], deployment_root=root, generation_aware=True
+    )
+    pathlib.Path(cert.fullchain_path).write_bytes(b"second\n")
+    second = deploy_certificate_artifacts(
+        cert=cert, domains=["example.com"], deployment_root=root, generation_aware=True
+    )
+    pathlib.Path(cert.fullchain_path).write_bytes(b"third\n")
+    third = deploy_certificate_artifacts(
+        cert=cert, domains=["example.com"], deployment_root=root, generation_aware=True
+    )
+    target = root / "example.com"
+    pin_generation(target, first.generation_id or "")
+
+    removed = cleanup_generations(target, retention_count=1, retention_days=0)
+
+    assert first.generation_id not in removed
+    assert third.generation_id not in removed
+    assert second.generation_id in removed

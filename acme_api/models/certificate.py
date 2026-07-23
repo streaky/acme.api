@@ -157,6 +157,9 @@ class Certificate(Base, TimestampMixin):
         nullable=True,
         doc="Idempotency key used to release a held DNS Persist request.",
     )
+    current_generation_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    current_generation_details: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
+    generation_selection_idempotency_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     # -- relationships --------------------------------------------------------
 

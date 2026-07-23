@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import uuid
 
 from sqlalchemy import select, update
@@ -12,7 +13,13 @@ from acme_api.backend.acmesh_backend import AcmeShBackend
 from acme_api.backend.acmesh_errors import AcmeShError, TransientAcmeShError
 from acme_api.backend.protocol import AcmeBackend, ChallengeMethod
 from acme_api.config import AcmeAccountConfig, AppSettings, DnsProviderConfig
-from acme_api.deployer import DeploymentError, DeploymentOptions, deploy_issuance_result
+from acme_api.deployer import (
+    DeploymentError,
+    DeploymentOptions,
+    DeploymentPaths,
+    deploy_issuance_result,
+    select_generation,
+)
 from acme_api.models.certificate import Certificate, CertificateStatus
 from acme_api.models.event import Event
 from acme_api.schemas.certificate import CertificateCreate
@@ -330,6 +337,9 @@ class CertificateLifecycleService:
                     allowed_source_roots=(
                         [self._settings.acme.home_dir] if isinstance(self._backend, AcmeShBackend) else None
                     ),
+                    generation_aware=self._settings.deployment.generation_aware,
+                    generation_retention_count=self._settings.deployment.generation_retention_count,
+                    generation_retention_days=self._settings.deployment.generation_retention_days,
                 ),
             )
         except (AcmeShError, DeploymentError) as exc:
@@ -338,7 +348,12 @@ class CertificateLifecycleService:
         transition = await session.execute(
             update(Certificate)
             .where(Certificate.id == certificate.id, Certificate.status == CertificateStatus.ISSUING)
-            .values(expiry_date=result.cert.expires_at, status=CertificateStatus.VALID)
+            .values(
+                expiry_date=result.cert.expires_at,
+                status=CertificateStatus.VALID,
+                current_generation_id=deployed.generation_id,
+                current_generation_details=_generation_details(deployed),
+            )
             .returning(Certificate.id)
         )
         if transition.scalar_one_or_none() is None:
@@ -360,6 +375,38 @@ class CertificateLifecycleService:
         await self._dispatch_webhook(session, "certificate.issued", certificate)
         if self._scheduler is not None:
             self._scheduler.schedule_certificate(certificate)
+
+    async def select_deployment_generation(
+        self,
+        certificate_id: uuid.UUID,
+        *,
+        generation_id: str,
+        idempotency_key: str,
+    ) -> Certificate:
+        """Select a retained deployment generation with durable idempotency."""
+        if not self._settings.deployment.generation_aware:
+            raise CertificateLifecycleError("Generation-aware deployment is not enabled.")
+        async with self._session_factory() as session:
+            certificate = await session.get(Certificate, certificate_id)
+            if certificate is None:
+                raise CertificateNotFoundError("Certificate not found.")
+            if certificate.generation_selection_idempotency_key == idempotency_key:
+                if certificate.current_generation_id == generation_id:
+                    return certificate
+                raise CertificateLifecycleError("Idempotency key was already used for another generation.")
+            try:
+                deployed = select_generation(
+                    self._settings.deployment.directory / certificate.deployment_directory,
+                    generation_id,
+                )
+            except DeploymentError as exc:
+                raise CertificateLifecycleError(str(exc)) from exc
+            certificate.current_generation_id = deployed.generation_id
+            certificate.current_generation_details = _generation_details(deployed)
+            certificate.generation_selection_idempotency_key = idempotency_key
+            await session.commit()
+            await session.refresh(certificate)
+            return certificate
 
     async def revoke_certificate(self, certificate_id: uuid.UUID) -> None:
         """Soft-delete a certificate, cancelling held requests before issuance."""
@@ -495,3 +542,23 @@ def _error_category(error: Exception) -> str:
     if isinstance(error, TransientAcmeShError):
         return "transient"
     return "terminal" if isinstance(error, AcmeShError) else "deployment"
+
+
+def _generation_details(deployed: DeploymentPaths) -> dict[str, object] | None:
+    """Read the public metadata recorded with one optional immutable generation."""
+    if deployed.generation_id is None:
+        return None
+    metadata = json.loads(deployed.metadata_path.read_text(encoding="utf-8"))
+    return {
+        "generation_id": deployed.generation_id,
+        "paths": {
+            "cert": str(deployed.cert_path),
+            "chain": str(deployed.chain_path),
+            "fullchain": str(deployed.fullchain_path),
+            "privkey": str(deployed.privkey_path),
+        },
+        "fingerprint_sha256": metadata["fingerprint_sha256"],
+        "serial": metadata.get("serial"),
+        "subjects": metadata["subjects"],
+        "validity": {"not_after": metadata["expires_at"]},
+    }

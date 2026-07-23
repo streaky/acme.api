@@ -98,12 +98,23 @@ run with that GID as a supplementary group. If it cannot assign the group to a
 deployment directory or artifact, issuance or renewal records a deployment
 failure rather than publishing an unexpected access policy. A typical
 shared-volume configuration uses `permissions_key: 416` (`0640`) and grants
+
 read-only consumers membership in the same GID. When configured, acme.api sets
 directories it owns—or whose group it changes—to that group with `0750` mode,
 ensuring consumers can traverse them even with a restrictive umask.
 Pre-provisioned directories owned by another user retain their ownership and
 mode only when they already belong to the configured GID, so a non-root service
 can use an administrator-managed volume without `CAP_CHOWN`.
+
+Enable `deployment.generation_aware` to preserve every successful issuance or
+renewal as an immutable artifact set. acme.api publishes a complete generation
+directory, then atomically switches the `current` symlink. The established
+`cert.pem`, `chain.pem`, `fullchain.pem`, `privkey.pem`, and `metadata.json`
+paths become symlinks through that pointer, so existing consumers keep their
+predictable paths. `generation_retention_count` and
+`generation_retention_days` may be set independently; a generation is removed
+only when it exceeds every configured limit. The selected generation and any
+explicitly pinned generation are never removed.
 
 Example certificate request:
 
@@ -199,6 +210,26 @@ deployment root. For ordinary certificates it is the first requested domain:
     metadata.json
 ```
 
+
+With generation-aware deployment enabled, each immutable publication is stored
+below a dedicated namespace:
+
+```text
+/certificates/example.com/
+    current -> generations/<generation_id>
+    fullchain.pem -> current/fullchain.pem
+    privkey.pem -> current/privkey.pem
+    generations/<generation_id>/
+        cert.pem
+        chain.pem
+        fullchain.pem
+        privkey.pem
+        metadata.json
+```
+
+The `generations/` component is intentional rather than redundant: it
+unambiguously separates immutable historical artifacts from the stable
+compatibility projection and future deployment control files.
 Wildcard domains use a portable collision-free name: a request for
 `*.example.com` reports `deployment_directory: "@wildcard@.example.com"` and
 deploys under `/certificates/@wildcard@.example.com/`. This cannot collide with a

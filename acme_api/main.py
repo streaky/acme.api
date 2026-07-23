@@ -92,6 +92,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
             permissions_key=settings.deployment.permissions_key,
             artifact_group_id=settings.deployment.artifact_group_id,
             allowed_source_roots=([settings.acme.home_dir] if isinstance(backend, AcmeShBackend) else None),
+            generation_aware=settings.deployment.generation_aware,
+            generation_retention_count=settings.deployment.generation_retention_count,
+            generation_retention_days=settings.deployment.generation_retention_days,
         ),
     )
     app.state.renewal_scheduler = renewal_scheduler

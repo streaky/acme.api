@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import dataclasses as dc
 import datetime as dt
+import json
 import uuid
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -19,7 +20,7 @@ from acme_api.backend.acmesh_errors import AcmeShError, TransientAcmeShError
 from acme_api.backend.dataclasses import IssuanceResult
 from acme_api.backend.protocol import AcmeBackend
 from acme_api.config import RenewalConfig
-from acme_api.deployer import DeploymentError, DeploymentOptions, deploy_issuance_result
+from acme_api.deployer import DeploymentError, DeploymentOptions, DeploymentPaths, deploy_issuance_result
 from acme_api.models.certificate import Certificate, CertificateStatus
 from acme_api.models.event import Event
 from acme_api.models.renewal_attempt import RenewalAttempt
@@ -49,6 +50,9 @@ class RenewalDeploymentConfig:
     permissions_key: int = 0o600
     artifact_group_id: int | None = None
     allowed_source_roots: list[Path] | None = None
+    generation_aware: bool = False
+    generation_retention_count: int | None = None
+    generation_retention_days: int | None = None
 
 
 class RenewalScheduler:
@@ -159,7 +163,7 @@ class RenewalScheduler:
                 return
 
             try:
-                deployment_path = self._deploy_result(result, certificate.acme_account_ref)
+                deployed = self._deploy_result(result, certificate.acme_account_ref)
             except DeploymentError as exc:
                 await self._record_failure(
                     session=session,
@@ -170,6 +174,9 @@ class RenewalScheduler:
                 return
 
             certificate.expiry_date = result.cert.expires_at
+            if deployed is not None:
+                certificate.current_generation_id = deployed.generation_id
+                certificate.current_generation_details = _generation_details(deployed)
             certificate.status = CertificateStatus.VALID
             session.add(
                 RenewalAttempt(
@@ -184,7 +191,7 @@ class RenewalScheduler:
                     details={
                         "domains": certificate.domains,
                         "expires_at": result.cert.expires_at.isoformat(),
-                        "deployment_path": str(deployment_path) if deployment_path is not None else None,
+                        "deployment_path": str(deployed.directory) if deployed is not None else None,
                     },
                 )
             )
@@ -225,7 +232,7 @@ class RenewalScheduler:
         self,
         result: IssuanceResult,
         issuer: str | None,
-    ) -> Path | None:
+    ) -> DeploymentPaths | None:
         """Deploy renewed artifacts when deployment is enabled for the scheduler."""
         if self._deployment is None:
             return None
@@ -238,9 +245,12 @@ class RenewalScheduler:
                 artifact_group_id=self._deployment.artifact_group_id,
                 issuer=issuer,
                 allowed_source_roots=self._deployment.allowed_source_roots,
+                generation_aware=self._deployment.generation_aware,
+                generation_retention_count=self._deployment.generation_retention_count,
+                generation_retention_days=self._deployment.generation_retention_days,
             ),
         )
-        return deployed.directory
+        return deployed
 
     async def _record_failure(
         self,
@@ -356,3 +366,23 @@ def _as_utc(value: dt.datetime) -> dt.datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=dt.UTC)
     return value.astimezone(dt.UTC)
+
+
+def _generation_details(deployed: DeploymentPaths) -> dict[str, object] | None:
+    """Read public immutable-generation metadata for certificate API output."""
+    if deployed.generation_id is None:
+        return None
+    metadata = json.loads(deployed.metadata_path.read_text(encoding="utf-8"))
+    return {
+        "generation_id": deployed.generation_id,
+        "paths": {
+            "cert": str(deployed.cert_path),
+            "chain": str(deployed.chain_path),
+            "fullchain": str(deployed.fullchain_path),
+            "privkey": str(deployed.privkey_path),
+        },
+        "fingerprint_sha256": metadata["fingerprint_sha256"],
+        "serial": metadata.get("serial"),
+        "subjects": metadata["subjects"],
+        "validity": {"not_after": metadata["expires_at"]},
+    }

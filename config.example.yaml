@@ -19,6 +19,12 @@ deployment:
   # acme.api applies it to the root and each deployment directory with mode 0750,
   # so members can traverse restrictive-umask deployments.
   # artifact_group_id: 10001
+  # Publish immutable generations and atomically point compatibility paths at current.
+  # generation_aware: true
+  # Keep at least this many recent generations; null disables this retention limit.
+  # generation_retention_count: 5
+  # Delete only generations older than this many days; null disables this limit.
+  # generation_retention_days: 30
 
 acme:
   binary_path: /usr/local/bin/acme.sh
