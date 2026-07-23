@@ -300,8 +300,8 @@ def _deploy_generation(  # pylint: disable=too-many-arguments
 
 def select_generation(target_dir: Path, generation_id: str) -> DeploymentPaths:
     """Atomically make one retained generation current."""
-    generation_dir = target_dir / "generations" / generation_id
-    if not generation_dir.is_dir() or generation_id != Path(generation_id).name:
+    generation_dir = _retained_generation_directory(target_dir, generation_id)
+    if not generation_dir.is_dir():
         raise DeploymentError(f"retained generation does not exist: {generation_id}")
     _select_generation_directory(target_dir, generation_id)
     return _deployment_paths(generation_dir, generation_id)
@@ -309,8 +309,8 @@ def select_generation(target_dir: Path, generation_id: str) -> DeploymentPaths:
 
 def pin_generation(target_dir: Path, generation_id: str) -> None:
     """Protect one retained generation from retention cleanup."""
-    generation_dir = target_dir / "generations" / generation_id
-    if not generation_dir.is_dir() or generation_id != Path(generation_id).name:
+    generation_dir = _retained_generation_directory(target_dir, generation_id)
+    if not generation_dir.is_dir():
         raise DeploymentError(f"retained generation does not exist: {generation_id}")
     pinned_dir = target_dir / ".pinned-generations"
     pinned_dir.mkdir(exist_ok=True)
@@ -325,6 +325,12 @@ def unpin_generation(target_dir: Path, generation_id: str) -> None:
     if pinned_path.exists():
         pinned_path.unlink()
         _fsync_directory(pinned_dir)
+
+
+def _retained_generation_directory(target_dir: Path, generation_id: str) -> Path:
+    if not generation_id or generation_id in {".", ".."} or Path(generation_id).name != generation_id:
+        raise DeploymentError(f"retained generation does not exist: {generation_id}")
+    return target_dir / "generations" / generation_id
 
 
 def _select_generation_directory(target_dir: Path, generation_id: str) -> None:

@@ -8,7 +8,13 @@ from datetime import UTC, datetime
 import pytest
 
 from acme_api.backend.dataclasses import CertExpiry
-from acme_api.deployer import DeploymentOptions, GenerationOptions, deploy_certificate_artifacts
+from acme_api.deployer import (
+    DeploymentError,
+    DeploymentOptions,
+    GenerationOptions,
+    deploy_certificate_artifacts,
+    select_generation,
+)
 
 
 def _source_certificate(tmp_path: pathlib.Path) -> CertExpiry:
@@ -51,3 +57,21 @@ def test_generation_cleanup_failure_does_not_rollback_publication(
     target = root / "cleanup.example.com"
     assert (target / "current").resolve() == deployed.directory
     assert (target / "fullchain.pem").read_bytes() == deployed.fullchain_path.read_bytes()
+
+
+@pytest.mark.parametrize("generation_id", [".", ".."])
+def test_selection_rejects_dot_segment_generation_ids(tmp_path: pathlib.Path, generation_id: str) -> None:
+    """Dot-segment input cannot replace the current compatibility pointer."""
+    cert = _source_certificate(tmp_path)
+    root = tmp_path / "certificates"
+    deployed = deploy_certificate_artifacts(
+        cert=cert,
+        domains=["selector.example.com"],
+        deployment_root=root,
+        options=DeploymentOptions(generation=GenerationOptions(enabled=True)),
+    )
+
+    with pytest.raises(DeploymentError, match="retained generation does not exist"):
+        select_generation(root / "selector.example.com", generation_id)
+
+    assert (root / "selector.example.com" / "current").resolve() == deployed.directory
