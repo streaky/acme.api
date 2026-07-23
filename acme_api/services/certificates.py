@@ -189,11 +189,28 @@ class CertificateLifecycleService:
             if certificate.challenge_method != "dns-persist":
                 raise CertificateLifecycleError("Certificate does not use DNS Persist.")
             if certificate.status == CertificateStatus.HELD:
-                certificate.status = CertificateStatus.AUTHORIZATION_READY
-                certificate.revision += 1
+                result = await session.execute(
+                    update(Certificate)
+                    .where(
+                        Certificate.id == certificate_id,
+                        Certificate.status == CertificateStatus.HELD,
+                        Certificate.revision == certificate.revision,
+                    )
+                    .values(
+                        status=CertificateStatus.AUTHORIZATION_READY,
+                        revision=Certificate.revision + 1,
+                    )
+                    .returning(Certificate.id)
+                )
+                if result.scalar_one_or_none() is None:
+                    await session.rollback()
+                    certificate = await session.get(Certificate, certificate_id)
+                    if certificate is None:
+                        raise CertificateNotFoundError("Certificate not found.")
+                    return certificate, False
+                await session.refresh(certificate)
                 await self._record_event(session, certificate, "certificate.authorization_ready", {})
                 await session.commit()
-                await session.refresh(certificate)
                 return certificate, False
             if certificate.status not in (CertificateStatus.PENDING_DNS, CertificateStatus.FAILED):
                 return certificate, False
