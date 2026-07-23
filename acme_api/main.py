@@ -26,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from acme_api.backend.acmesh_backend import AcmeShBackend, _AcmeShBackendConfig
 from acme_api.config import AppSettings, load_config, prepare_runtime_paths
 from acme_api.db import get_db, get_session_factory, init_engine, run_migrations
+from acme_api.deployer import GenerationOptions
 from acme_api.logging import setup_logging
 from acme_api.middleware import RequestIdMiddleware
 from acme_api.readiness import readiness_status
@@ -92,9 +93,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
             permissions_key=settings.deployment.permissions_key,
             artifact_group_id=settings.deployment.artifact_group_id,
             allowed_source_roots=([settings.acme.home_dir] if isinstance(backend, AcmeShBackend) else None),
-            generation_aware=settings.deployment.generation_aware,
-            generation_retention_count=settings.deployment.generation_retention_count,
-            generation_retention_days=settings.deployment.generation_retention_days,
+            generation=GenerationOptions(
+                enabled=settings.deployment.generation_aware,
+                retention_count=settings.deployment.generation_retention_count,
+                retention_days=settings.deployment.generation_retention_days,
+            ),
         ),
     )
     app.state.renewal_scheduler = renewal_scheduler

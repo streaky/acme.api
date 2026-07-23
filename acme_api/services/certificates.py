@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import uuid
 
 from sqlalchemy import select, update
@@ -16,7 +15,7 @@ from acme_api.config import AcmeAccountConfig, AppSettings, DnsProviderConfig
 from acme_api.deployer import (
     DeploymentError,
     DeploymentOptions,
-    DeploymentPaths,
+    GenerationOptions,
     deploy_issuance_result,
     select_generation,
 )
@@ -28,10 +27,17 @@ from acme_api.services.certificate_contracts import (
     CertificateConflictError,
     CertificateLifecycleError,
     CertificateNotFoundError,
-    CertificateNotRenewableError,
     RenewalSchedulerProtocol,
     WebhookDispatcherFactory,
 )
+from acme_api.services.certificate_lifecycle_operations import (
+    request_manual_renewal as _request_manual_renewal,
+)
+from acme_api.services.certificate_lifecycle_operations import (
+    revoke_certificate as _revoke_certificate,
+)
+from acme_api.services.certificate_utilities import account_key_path, dns_persist_scope, error_category
+from acme_api.services.deployment_generations import generation_details
 
 
 class CertificateLifecycleService:
@@ -66,12 +72,12 @@ class CertificateLifecycleService:
                 return self._resume_or_reject(existing, payload)
 
             if payload.challenge_method == "dns-persist":
-                dns_persist_domain, wildcard_policy = _dns_persist_scope(payload.domains)
+                dns_persist_domain, wildcard_policy = dns_persist_scope(payload.domains)
                 try:
                     dns_value = await self._backend.make_dns_persist_value(
                         dns_persist_domain,
                         wildcard=wildcard_policy,
-                        account_key_path=_account_key_path(account),
+                        account_key_path=account_key_path(account),
                         server_url=account.server_url,
                     )
                 except TransientAcmeShError as exc:
@@ -84,8 +90,8 @@ class CertificateLifecycleService:
                     name=payload.name,
                     domains=payload.domains,
                     acme_account_ref=payload.acme_account_ref,
-                    dns_provider_ref=None,
                     challenge_method="dns-persist",
+                    dns_provider_ref=None,
                     dns_record_name=f"_validation-persist.{dns_persist_domain}",
                     dns_record_value=dns_value,
                     key_algorithm=payload.key_algorithm,
@@ -106,7 +112,6 @@ class CertificateLifecycleService:
                 await session.flush()
             except IntegrityError as exc:
                 await session.rollback()
-                existing = await self._find_request(session, payload)
                 if existing is not None:
                     return self._resume_or_reject(existing, payload)
                 raise CertificateConflictError("Certificate request already exists.") from exc
@@ -323,7 +328,7 @@ class CertificateLifecycleService:
                 domains=certificate.domains,
                 method=method,
                 challenge_params=challenge_params,
-                account_key_path=_account_key_path(account),
+                account_key_path=account_key_path(account),
                 server_url=account.server_url,
             )
             deployed = deploy_issuance_result(
@@ -337,9 +342,11 @@ class CertificateLifecycleService:
                     allowed_source_roots=(
                         [self._settings.acme.home_dir] if isinstance(self._backend, AcmeShBackend) else None
                     ),
-                    generation_aware=self._settings.deployment.generation_aware,
-                    generation_retention_count=self._settings.deployment.generation_retention_count,
-                    generation_retention_days=self._settings.deployment.generation_retention_days,
+                    generation=GenerationOptions(
+                        enabled=self._settings.deployment.generation_aware,
+                        retention_count=self._settings.deployment.generation_retention_count,
+                        retention_days=self._settings.deployment.generation_retention_days,
+                    ),
                 ),
             )
         except (AcmeShError, DeploymentError) as exc:
@@ -352,7 +359,7 @@ class CertificateLifecycleService:
                 expiry_date=result.cert.expires_at,
                 status=CertificateStatus.VALID,
                 current_generation_id=deployed.generation_id,
-                current_generation_details=_generation_details(deployed),
+                current_generation_details=generation_details(deployed),
             )
             .returning(Certificate.id)
         )
@@ -402,7 +409,7 @@ class CertificateLifecycleService:
             except DeploymentError as exc:
                 raise CertificateLifecycleError(str(exc)) from exc
             certificate.current_generation_id = deployed.generation_id
-            certificate.current_generation_details = _generation_details(deployed)
+            certificate.current_generation_details = generation_details(deployed)
             certificate.generation_selection_idempotency_key = idempotency_key
             await session.commit()
             await session.refresh(certificate)
@@ -410,48 +417,11 @@ class CertificateLifecycleService:
 
     async def revoke_certificate(self, certificate_id: uuid.UUID) -> None:
         """Soft-delete a certificate, cancelling held requests before issuance."""
-        async with self._session_factory() as session:
-            certificate = await session.get(Certificate, certificate_id)
-            if certificate is None:
-                raise CertificateNotFoundError("Certificate not found.")
-            if certificate.status == CertificateStatus.CANCELLED:
-                return
-
-            held_lifecycle_statuses = (
-                CertificateStatus.HELD,
-                CertificateStatus.AUTHORIZATION_READY,
-                CertificateStatus.RELEASED,
-            )
-            is_held_lifecycle_request = certificate.status in held_lifecycle_statuses or (
-                certificate.status == CertificateStatus.ISSUING and certificate.release_idempotency_key is not None
-            )
-            certificate.status = CertificateStatus.CANCELLED if is_held_lifecycle_request else CertificateStatus.REVOKED
-            event_type = "certificate.cancelled" if is_held_lifecycle_request else "certificate.revoked"
-            await self._record_event(session, certificate, event_type, {"name": certificate.name})
-            await session.commit()
-            await self._dispatch_webhook(session, event_type, certificate)
-
-        if self._scheduler is not None:
-            self._scheduler.remove_certificate(certificate_id)
+        await _revoke_certificate(self, certificate_id)
 
     async def request_manual_renewal(self, certificate_id: uuid.UUID) -> Certificate:
         """Record a manual renewal request without doing DNS work inline."""
-        async with self._session_factory() as session:
-            certificate = await session.get(Certificate, certificate_id)
-            if certificate is None:
-                raise CertificateNotFoundError("Certificate not found.")
-            if certificate.status != CertificateStatus.VALID:
-                raise CertificateNotRenewableError("Certificate is not renewable.")
-
-            await self._record_event(
-                session,
-                certificate,
-                "certificate.renewal_requested",
-                {"name": certificate.name},
-            )
-            await session.commit()
-            await session.refresh(certificate)
-            return certificate
+        return await _request_manual_renewal(self, certificate_id)
 
     async def _mark_failed(
         self,
@@ -474,7 +444,7 @@ class CertificateLifecycleService:
             certificate,
             "certificate.failed",
             {
-                "category": _error_category(error),
+                "category": error_category(error),
                 "error": str(error),
             },
         )
@@ -519,46 +489,3 @@ class CertificateLifecycleService:
             if account.name == name:
                 return account
         raise DeploymentError(f"ACME account not configured: {name}")
-
-
-def _dns_persist_scope(domains: list[str]) -> tuple[str, bool]:
-    """Return the primary DNS Persist scope and whether it needs wildcard policy."""
-    scope = domains[0].removeprefix("*.")
-    if any(
-        domain.removeprefix("*.") != scope and not domain.removeprefix("*.").endswith(f".{scope}") for domain in domains
-    ):
-        raise CertificateLifecycleError(
-            "DNS Persist SANs must be the primary domain or its subdomains; "
-            "create separate requests for unrelated domains."
-        )
-    return scope, len(domains) > 1 or domains[0].startswith("*.")
-
-
-def _account_key_path(account: AcmeAccountConfig) -> str | None:
-    return str(account.account_key_path) if account.account_key_path is not None else None
-
-
-def _error_category(error: Exception) -> str:
-    if isinstance(error, TransientAcmeShError):
-        return "transient"
-    return "terminal" if isinstance(error, AcmeShError) else "deployment"
-
-
-def _generation_details(deployed: DeploymentPaths) -> dict[str, object] | None:
-    """Read the public metadata recorded with one optional immutable generation."""
-    if deployed.generation_id is None:
-        return None
-    metadata = json.loads(deployed.metadata_path.read_text(encoding="utf-8"))
-    return {
-        "generation_id": deployed.generation_id,
-        "paths": {
-            "cert": str(deployed.cert_path),
-            "chain": str(deployed.chain_path),
-            "fullchain": str(deployed.fullchain_path),
-            "privkey": str(deployed.privkey_path),
-        },
-        "fingerprint_sha256": metadata["fingerprint_sha256"],
-        "serial": metadata.get("serial"),
-        "subjects": metadata["subjects"],
-        "validity": {"not_after": metadata["expires_at"]},
-    }

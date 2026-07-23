@@ -67,6 +67,15 @@ class DeploymentMetadata:
 
 
 @dc.dataclass(frozen=True)
+class GenerationOptions:
+    """Immutable-generation publication and retention settings."""
+
+    enabled: bool = False
+    retention_count: int | None = None
+    retention_days: int | None = None
+
+
+@dc.dataclass(frozen=True)
 class DeploymentOptions:
     """Options that control certificate deployment behavior."""
 
@@ -75,9 +84,7 @@ class DeploymentOptions:
     artifact_group_id: int | None = None
     issuer: str | None = None
     allowed_source_roots: list[Path] | None = None
-    generation_aware: bool = False
-    generation_retention_count: int | None = None
-    generation_retention_days: int | None = None
+    generation: GenerationOptions = dc.field(default_factory=GenerationOptions)
 
 
 class DeploymentError(Exception):
@@ -119,65 +126,61 @@ def deploy_issuance_result(
         domains=result.domains,
         deployment_root=deployment_root,
         metadata=metadata,
-        permissions_cert=options.permissions_cert,
-        permissions_key=options.permissions_key,
-        artifact_group_id=options.artifact_group_id,
-        allowed_source_roots=options.allowed_source_roots,
-        generation_aware=options.generation_aware,
-        generation_retention_count=options.generation_retention_count,
-        generation_retention_days=options.generation_retention_days,
+        options=DeploymentOptions(
+            permissions_cert=options.permissions_cert,
+            permissions_key=options.permissions_key,
+            artifact_group_id=options.artifact_group_id,
+            allowed_source_roots=options.allowed_source_roots,
+            generation=options.generation,
+        ),
     )
 
 
-def deploy_certificate_artifacts(  # pylint: disable=too-many-arguments
+def deploy_certificate_artifacts(
     *,
     cert: CertExpiry,
     domains: list[str],
     deployment_root: Path,
     metadata: DeploymentMetadata | None = None,
-    permissions_cert: int = 0o644,
-    permissions_key: int = 0o600,
-    artifact_group_id: int | None = None,
-    allowed_source_roots: list[Path] | None = None,
-    generation_aware: bool = False,
-    generation_retention_count: int | None = None,
-    generation_retention_days: int | None = None,
+    options: DeploymentOptions | None = None,
 ) -> DeploymentPaths:
     """Deploy certificate artifacts, optionally as an immutable generation."""
-    if generation_retention_count is not None and generation_retention_count < 1:
+    options = options or DeploymentOptions()
+    generation = options.generation
+    if generation.retention_count is not None and generation.retention_count < 1:
         raise DeploymentError("generation retention count must be at least one")
-    if generation_retention_days is not None and generation_retention_days < 0:
+    if generation.retention_days is not None and generation.retention_days < 0:
         raise DeploymentError("generation retention days cannot be negative")
     temp_dir: Path | None = None
     try:
         deployment_root.mkdir(parents=True, exist_ok=True)
-        _configure_consumer_directories(deployment_root, artifact_group_id)
+        _configure_consumer_directories(deployment_root, options.artifact_group_id)
         primary_domain = _primary_domain(domains)
         target_dir = deployment_root / deployment_directory_name(primary_domain)
         target_dir.mkdir(parents=True, exist_ok=True)
-        _configure_consumer_directories(target_dir, artifact_group_id)
+        _configure_consumer_directories(target_dir, options.artifact_group_id)
         source_paths = _source_paths(cert)
-        _validate_source_files(source_paths, allowed_source_roots)
+        _validate_source_files(source_paths, options.allowed_source_roots)
         metadata = metadata or _metadata_for_cert(cert, domains, primary_domain)
-        if generation_aware:
+        if generation.enabled:
             return _deploy_generation(
                 target_dir=target_dir,
                 source_paths=source_paths,
                 metadata=metadata,
-                permissions_cert=permissions_cert,
-                permissions_key=permissions_key,
-                artifact_group_id=artifact_group_id,
-                retention_count=generation_retention_count,
-                retention_days=generation_retention_days,
+                permissions_cert=options.permissions_cert,
+                permissions_key=options.permissions_key,
+                artifact_group_id=options.artifact_group_id,
+                retention_count=generation.retention_count,
+                retention_days=generation.retention_days,
             )
         temp_dir = Path(tempfile.mkdtemp(prefix=".deploy-", dir=target_dir))
         _write_temp_artifacts(
             temp_dir=temp_dir,
             source_paths=source_paths,
             metadata=metadata,
-            permissions_cert=permissions_cert,
-            permissions_key=permissions_key,
-            artifact_group_id=artifact_group_id,
+            permissions_cert=options.permissions_cert,
+            permissions_key=options.permissions_key,
+            artifact_group_id=options.artifact_group_id,
         )
         _fsync_directory(temp_dir)
         _replace_artifacts(temp_dir, target_dir)

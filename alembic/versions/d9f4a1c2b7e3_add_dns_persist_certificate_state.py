@@ -7,9 +7,9 @@ Create Date: 2026-07-21
 
 from __future__ import annotations
 
-from alembic import op
 import sqlalchemy as sa
 
+from alembic import op
 
 revision: str = "d9f4a1c2b7e3"
 down_revision: str | None = "1de7e7e68b3d"

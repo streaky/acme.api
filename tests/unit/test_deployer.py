@@ -8,6 +8,7 @@ import pathlib
 import stat
 from collections.abc import Callable
 from datetime import UTC, datetime
+from typing import cast
 from unittest.mock import patch
 
 import pytest
@@ -16,12 +17,43 @@ from acme_api.backend.dataclasses import CertExpiry, IssuanceResult
 from acme_api.deployer import (
     DeploymentError,
     DeploymentOptions,
+    DeploymentPaths,
+    GenerationOptions,
     cleanup_generations,
-    deploy_certificate_artifacts,
     deploy_issuance_result,
     pin_generation,
     select_generation,
 )
+from acme_api.deployer import (
+    deploy_certificate_artifacts as _deploy_certificate_artifacts,
+)
+
+
+def deploy_certificate_artifacts(
+    *,
+    cert: CertExpiry,
+    domains: list[str],
+    deployment_root: pathlib.Path,
+    **overrides: object,
+) -> DeploymentPaths:
+    """Adapt direct deployment tests to the structured deployment options contract."""
+    generation = GenerationOptions(
+        enabled=bool(overrides.pop("generation_aware", False)),
+        retention_count=cast("int | None", overrides.pop("generation_retention_count", None)),
+        retention_days=cast("int | None", overrides.pop("generation_retention_days", None)),
+    )
+    return _deploy_certificate_artifacts(
+        cert=cert,
+        domains=domains,
+        deployment_root=deployment_root,
+        options=DeploymentOptions(
+            permissions_cert=cast("int", overrides.pop("permissions_cert", 0o644)),
+            permissions_key=cast("int", overrides.pop("permissions_key", 0o600)),
+            artifact_group_id=cast("int | None", overrides.pop("artifact_group_id", None)),
+            allowed_source_roots=cast("list[pathlib.Path] | None", overrides.pop("allowed_source_roots", None)),
+            generation=generation,
+        ),
+    )
 
 
 def _write_sources(tmp_path: pathlib.Path) -> CertExpiry:

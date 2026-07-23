@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import dataclasses as dc
 import datetime as dt
-import json
 import uuid
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -20,10 +19,17 @@ from acme_api.backend.acmesh_errors import AcmeShError, TransientAcmeShError
 from acme_api.backend.dataclasses import IssuanceResult
 from acme_api.backend.protocol import AcmeBackend
 from acme_api.config import RenewalConfig
-from acme_api.deployer import DeploymentError, DeploymentOptions, DeploymentPaths, deploy_issuance_result
+from acme_api.deployer import (
+    DeploymentError,
+    DeploymentOptions,
+    DeploymentPaths,
+    GenerationOptions,
+    deploy_issuance_result,
+)
 from acme_api.models.certificate import Certificate, CertificateStatus
 from acme_api.models.event import Event
 from acme_api.models.renewal_attempt import RenewalAttempt
+from acme_api.services.deployment_generations import generation_details
 from acme_api.webhooks import WebhookDispatcher
 
 WebhookDispatcherFactory = Callable[[AsyncSession], WebhookDispatcher]
@@ -50,9 +56,7 @@ class RenewalDeploymentConfig:
     permissions_key: int = 0o600
     artifact_group_id: int | None = None
     allowed_source_roots: list[Path] | None = None
-    generation_aware: bool = False
-    generation_retention_count: int | None = None
-    generation_retention_days: int | None = None
+    generation: GenerationOptions = dc.field(default_factory=GenerationOptions)
 
 
 class RenewalScheduler:
@@ -176,7 +180,7 @@ class RenewalScheduler:
             certificate.expiry_date = result.cert.expires_at
             if deployed is not None:
                 certificate.current_generation_id = deployed.generation_id
-                certificate.current_generation_details = _generation_details(deployed)
+                certificate.current_generation_details = generation_details(deployed)
             certificate.status = CertificateStatus.VALID
             session.add(
                 RenewalAttempt(
@@ -245,9 +249,7 @@ class RenewalScheduler:
                 artifact_group_id=self._deployment.artifact_group_id,
                 issuer=issuer,
                 allowed_source_roots=self._deployment.allowed_source_roots,
-                generation_aware=self._deployment.generation_aware,
-                generation_retention_count=self._deployment.generation_retention_count,
-                generation_retention_days=self._deployment.generation_retention_days,
+                generation=self._deployment.generation,
             ),
         )
         return deployed
@@ -366,23 +368,3 @@ def _as_utc(value: dt.datetime) -> dt.datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=dt.UTC)
     return value.astimezone(dt.UTC)
-
-
-def _generation_details(deployed: DeploymentPaths) -> dict[str, object] | None:
-    """Read public immutable-generation metadata for certificate API output."""
-    if deployed.generation_id is None:
-        return None
-    metadata = json.loads(deployed.metadata_path.read_text(encoding="utf-8"))
-    return {
-        "generation_id": deployed.generation_id,
-        "paths": {
-            "cert": str(deployed.cert_path),
-            "chain": str(deployed.chain_path),
-            "fullchain": str(deployed.fullchain_path),
-            "privkey": str(deployed.privkey_path),
-        },
-        "fingerprint_sha256": metadata["fingerprint_sha256"],
-        "serial": metadata.get("serial"),
-        "subjects": metadata["subjects"],
-        "validity": {"not_after": metadata["expires_at"]},
-    }
