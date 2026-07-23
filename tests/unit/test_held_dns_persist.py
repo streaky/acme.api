@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from pathlib import Path
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
@@ -141,6 +142,64 @@ def test_cancel_claimed_held_issuance_preserves_cancelled_state(tmp_path: Path) 
         assert cancelled.status_code == 204
         status_response = client.get(f"/v1/certificates/{certificate_id}", headers=headers)
         assert status_response.json()["status"] == "cancelled"
+
+
+def test_cancelled_claimed_issuance_cannot_finalize_as_valid(tmp_path: Path) -> None:
+    """A stale issuance worker cannot overwrite a held request cancellation."""
+    headers = {"Authorization": "Bearer operator-key-12345"}
+    app = make_api_app(tmp_path)
+    backend = app.state.acme_backend
+    assert isinstance(backend, ArtifactBackend)
+    with TestClient(app) as client:
+        created = client.post(
+            "/v1/certificates",
+            headers=headers,
+            json={
+                "name": "finalization-race-cert",
+                "domains": ["example.com"],
+                "acme_account_ref": "letsencrypt-production",
+                "challenge_method": "dns-persist",
+                "held": True,
+            },
+        )
+        assert created.status_code == 202
+        certificate_id = uuid.UUID(created.json()["id"])
+
+        async def simulate_cancelled_finalization_race() -> None:
+            async with get_db() as session:
+                certificate = await session.get(Certificate, certificate_id)
+                assert certificate is not None
+                certificate.status = CertificateStatus.ISSUING
+                certificate.release_idempotency_key = "race-release"
+                await session.commit()
+
+            started = asyncio.Event()
+            continue_issuance = asyncio.Event()
+            original_issue = backend.issue_certificate
+
+            async def blocking_issue(
+                domains: list[str],
+                method: str,
+                challenge_params: dict[str, object],
+                account_key_path: str | None = None,
+                server_url: str | None = None,
+            ) -> object:
+                started.set()
+                await continue_issuance.wait()
+                return await original_issue(domains, method, challenge_params, account_key_path, server_url)
+
+            with patch.object(backend, "issue_certificate", new=blocking_issue):
+                issuance = asyncio.create_task(
+                    app.state.certificate_service.issue_dns_persist_certificate(certificate_id)
+                )
+                await started.wait()
+                await app.state.certificate_service.revoke_certificate(certificate_id)
+                continue_issuance.set()
+                await issuance
+
+        asyncio.run(simulate_cancelled_finalization_race())
+        recovered = client.get(f"/v1/certificates/{certificate_id}", headers=headers)
+        assert recovered.json()["status"] == "cancelled"
 
 
 def test_restart_resumes_held_issuance_interrupted_after_claim(tmp_path: Path) -> None:

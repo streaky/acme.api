@@ -345,8 +345,16 @@ class CertificateLifecycleService:
         except (AcmeShError, DeploymentError) as exc:
             await self._mark_failed(session, certificate, exc)
             return
-        certificate.expiry_date = result.cert.expires_at
-        certificate.status = CertificateStatus.VALID
+        transition = await session.execute(
+            update(Certificate)
+            .where(Certificate.id == certificate.id, Certificate.status == CertificateStatus.ISSUING)
+            .values(expiry_date=result.cert.expires_at, status=CertificateStatus.VALID)
+            .returning(Certificate.id)
+        )
+        if transition.scalar_one_or_none() is None:
+            await session.rollback()
+            return
+        await session.refresh(certificate)
         await self._record_event(
             session,
             certificate,
@@ -463,18 +471,6 @@ class CertificateLifecycleService:
             if account.name == name:
                 return account
         raise DeploymentError(f"ACME account not configured: {name}")
-
-
-async def expiring_event_exists(
-    session: AsyncSession,
-    certificate_id: uuid.UUID,
-) -> bool:
-    result = await session.scalar(
-        select(Event.id)
-        .where(Event.certificate_id == certificate_id, Event.event_type == "certificate.expiring")
-        .limit(1)
-    )
-    return result is not None
 
 
 def _dns_persist_scope(domains: list[str]) -> tuple[str, bool]:
