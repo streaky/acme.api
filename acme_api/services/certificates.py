@@ -222,7 +222,7 @@ class CertificateLifecycleService:
             if certificate.challenge_method != "dns-persist":
                 raise CertificateLifecycleError("Certificate does not use DNS Persist.")
             if certificate.release_idempotency_key == idempotency_key:
-                return certificate, False
+                return certificate, certificate.status == CertificateStatus.RELEASED
             result = await session.execute(
                 update(Certificate)
                 .where(
@@ -244,7 +244,7 @@ class CertificateLifecycleService:
                 if certificate is None:
                     raise CertificateNotFoundError("Certificate not found.")
                 if certificate.release_idempotency_key == idempotency_key:
-                    return certificate, False
+                    return certificate, certificate.status == CertificateStatus.RELEASED
                 raise CertificateLifecycleError("Certificate revision is stale or cannot be released.")
             await session.refresh(certificate)
             await self._record_event(session, certificate, "certificate.released", {"revision": revision})

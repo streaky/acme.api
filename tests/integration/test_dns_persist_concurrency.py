@@ -170,3 +170,50 @@ async def test_held_authorization_cannot_overwrite_concurrent_release(tmp_path: 
         assert [event.event_type for event in events] == ["certificate.released"]
     finally:
         await engine.dispose()
+
+
+@pytest.mark.anyio
+async def test_same_key_release_retry_requeues_unclaimed_request(tmp_path: Path) -> None:
+    """A same-key retry requests issuance while its release remains unclaimed."""
+    settings = _settings(tmp_path)
+    engine = init_engine(settings)
+    try:
+        await init_db(engine)
+        session_factory = get_session_factory()
+        async with session_factory() as session:
+            certificate = Certificate(
+                name="released-retry-cert",
+                domains=["example.com"],
+                acme_account_ref="letsencrypt-staging",
+                challenge_method="dns-persist",
+                dns_record_name="_validation-persist.example.com",
+                dns_record_value="persist-example.com",
+                status=CertificateStatus.HELD,
+            )
+            session.add(certificate)
+            await session.commit()
+            certificate_id = certificate.id
+            revision = certificate.revision
+
+        service = CertificateLifecycleService(
+            session_factory=session_factory,
+            backend=ArtifactBackend(tmp_path / "acme-artifacts"),
+            settings=settings,
+        )
+        released, starts_issuance = await service.release_held_dns_persist_certificate(
+            certificate_id,
+            revision=revision,
+            idempotency_key="retry-release",
+        )
+        retried, retry_starts_issuance = await service.release_held_dns_persist_certificate(
+            certificate_id,
+            revision=revision,
+            idempotency_key="retry-release",
+        )
+
+        assert released.status == CertificateStatus.RELEASED
+        assert starts_issuance is True
+        assert retried.status == CertificateStatus.RELEASED
+        assert retry_starts_issuance is True
+    finally:
+        await engine.dispose()
