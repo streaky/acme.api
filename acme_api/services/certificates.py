@@ -112,6 +112,7 @@ class CertificateLifecycleService:
                 await session.flush()
             except IntegrityError as exc:
                 await session.rollback()
+                existing = await self._find_request(session, payload)
                 if existing is not None:
                     return self._resume_or_reject(existing, payload)
                 raise CertificateConflictError("Certificate request already exists.") from exc

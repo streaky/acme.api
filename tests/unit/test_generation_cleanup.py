@@ -75,3 +75,31 @@ def test_selection_rejects_dot_segment_generation_ids(tmp_path: pathlib.Path, ge
         select_generation(root / "selector.example.com", generation_id)
 
     assert (root / "selector.example.com" / "current").resolve() == deployed.directory
+
+
+def test_generation_deployment_atomically_migrates_legacy_compatibility_files(tmp_path: pathlib.Path) -> None:
+    """Legacy artifact paths become current links through an immutable snapshot."""
+    cert = _source_certificate(tmp_path)
+    root = tmp_path / "certificates"
+    legacy = deploy_certificate_artifacts(
+        cert=cert,
+        domains=["legacy.example.com"],
+        deployment_root=root,
+    )
+    pathlib.Path(cert.fullchain_path).write_bytes(b"renewed-chain\n")
+    legacy_bytes = legacy.fullchain_path.read_bytes()
+
+    deployed = deploy_certificate_artifacts(
+        cert=cert,
+        domains=["legacy.example.com"],
+        deployment_root=root,
+        options=DeploymentOptions(generation=GenerationOptions(enabled=True)),
+    )
+
+    target = root / "legacy.example.com"
+    filenames = ("cert.pem", "chain.pem", "fullchain.pem", "privkey.pem")
+    assert all((target / filename).is_symlink() for filename in filenames)
+    legacy_ids = [path.name for path in (target / "generations").iterdir() if path.name.startswith("legacy-")]
+    restored = select_generation(target, legacy_ids[0])
+    assert restored.fullchain_path.read_bytes() == legacy_bytes
+    assert deployed.fullchain_path.read_bytes() == b"renewed-chain\n"
