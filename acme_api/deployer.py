@@ -262,6 +262,7 @@ def _deploy_generation(  # pylint: disable=too-many-arguments
     _configure_consumer_directories(generations_dir, artifact_group_id)
     generation_id = uuid4().hex
     staging_dir = Path(tempfile.mkdtemp(prefix=".generation-", dir=generations_dir))
+    _configure_consumer_directories(staging_dir, artifact_group_id)
     generation_dir = generations_dir / generation_id
     try:
         _write_temp_artifacts(

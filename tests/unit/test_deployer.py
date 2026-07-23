@@ -427,13 +427,21 @@ def test_generation_deployments_are_immutable_and_update_compatibility_paths(
     cert = _write_sources(tmp_path)
     root = tmp_path / "certificates"
     first = deploy_certificate_artifacts(
-        cert=cert, domains=["example.com"], deployment_root=root, generation_aware=True
+        cert=cert,
+        domains=["example.com"],
+        deployment_root=root,
+        generation_aware=True,
+        artifact_group_id=os.getgid(),
     )
     source_dir = pathlib.Path(cert.cert_path).parent
     (source_dir / "fullchain.pem").write_bytes(b"replacement-chain\n")
     (source_dir / "privkey.pem").write_bytes(b"replacement-key\n")
     second = deploy_certificate_artifacts(
-        cert=cert, domains=["example.com"], deployment_root=root, generation_aware=True
+        cert=cert,
+        domains=["example.com"],
+        deployment_root=root,
+        generation_aware=True,
+        artifact_group_id=os.getgid(),
     )
 
     target = root / "example.com"
@@ -443,6 +451,8 @@ def test_generation_deployments_are_immutable_and_update_compatibility_paths(
     assert (target / "fullchain.pem").read_bytes() == b"replacement-chain\n"
     assert (target / "privkey.pem").read_bytes() == b"replacement-key\n"
     assert (target / "current").is_symlink()
+    assert _mode(first.directory) == 0o750
+    assert first.directory.stat().st_gid == os.getgid()
 
 
 def test_selecting_retained_generation_restores_exact_compatibility_bytes(tmp_path: pathlib.Path) -> None:

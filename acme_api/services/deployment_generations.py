@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 
 from acme_api.deployer import DeploymentPaths
 
@@ -25,3 +26,11 @@ def generation_details(deployed: DeploymentPaths) -> dict[str, object] | None:
         "subjects": metadata["subjects"],
         "validity": {"not_after": metadata["expires_at"]},
     }
+
+
+def generation_expiry(deployed: DeploymentPaths) -> datetime | None:
+    """Return the selected generation's persisted certificate expiry."""
+    if deployed.generation_id is None:
+        return None
+    metadata = json.loads(deployed.metadata_path.read_text(encoding="utf-8"))
+    return datetime.fromisoformat(metadata["expires_at"])

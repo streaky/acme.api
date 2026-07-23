@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -378,6 +379,10 @@ def test_generation_selection_restores_a_retained_deployment(tmp_path: Path) -> 
         assert selected.status_code == 200, selected.text
         assert selected.json()["current_generation_id"] == first
         assert selected.json()["current_generation_details"]["generation_id"] == first
+        selected_expiry = datetime.fromisoformat(selected.json()["expiry_date"])
+        generation_validity = selected.json()["current_generation_details"]["validity"]["not_after"]
+        generation_expiry = datetime.fromisoformat(generation_validity)
+        assert selected_expiry == generation_expiry.replace(tzinfo=None)
         repeated = client.post(
             f"/v1/certificates/{certificate_id}/generations/select",
             headers={**headers, "Idempotency-Key": "select-first"},

@@ -37,7 +37,7 @@ from acme_api.services.certificate_lifecycle_operations import (
     revoke_certificate as _revoke_certificate,
 )
 from acme_api.services.certificate_utilities import account_key_path, dns_persist_scope, error_category
-from acme_api.services.deployment_generations import generation_details
+from acme_api.services.deployment_generations import generation_details, generation_expiry
 
 
 class CertificateLifecycleService:
@@ -410,9 +410,12 @@ class CertificateLifecycleService:
                 raise CertificateLifecycleError(str(exc)) from exc
             certificate.current_generation_id = deployed.generation_id
             certificate.current_generation_details = generation_details(deployed)
+            certificate.expiry_date = generation_expiry(deployed)
             certificate.generation_selection_idempotency_key = idempotency_key
             await session.commit()
             await session.refresh(certificate)
+            if self._scheduler is not None:
+                self._scheduler.schedule_certificate(certificate)
             return certificate
 
     async def revoke_certificate(self, certificate_id: uuid.UUID) -> None:
