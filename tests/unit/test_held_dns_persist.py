@@ -97,6 +97,9 @@ def test_held_dns_persist_survives_restart_and_can_cancel(tmp_path: Path) -> Non
         cancelled = client.delete(f"/v1/certificates/{certificate_id}", headers=headers)
         assert cancelled.status_code == 204
         assert client.get(f"/v1/certificates/{certificate_id}", headers=headers).json()["status"] == "cancelled"
+        repeated_cancel = client.delete(f"/v1/certificates/{certificate_id}", headers=headers)
+        assert repeated_cancel.status_code == 204
+        assert client.get(f"/v1/certificates/{certificate_id}", headers=headers).json()["status"] == "cancelled"
         duplicate = client.post(
             "/v1/certificates",
             headers=headers,

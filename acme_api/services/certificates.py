@@ -367,6 +367,8 @@ class CertificateLifecycleService:
             certificate = await session.get(Certificate, certificate_id)
             if certificate is None:
                 raise CertificateNotFoundError("Certificate not found.")
+            if certificate.status == CertificateStatus.CANCELLED:
+                return
 
             held_lifecycle_statuses = (
                 CertificateStatus.HELD,
