@@ -12,7 +12,7 @@ from sqlalchemy import select
 
 from acme_api.auth.hash import api_key_lookup_hash, hash_api_key
 from acme_api.backend.acmesh_errors import AcmeShError, TransientAcmeShError
-from acme_api.backend.dataclasses import CertExpiry, IssuanceResult
+from acme_api.backend.dataclasses import AccountInfo, CertExpiry, IssuanceResult
 from acme_api.config import (
     AcmeAccountConfig,
     AcmeConfig,
@@ -38,8 +38,9 @@ class ArtifactBackend:
         self.persist_value_error: AcmeShError | None = None
         self.persist_value_requests: list[tuple[str, bool]] = []
 
-    async def register_account(self, email: str, server_url: str) -> object:
-        raise NotImplementedError
+    async def register_account(self, email: str, server_url: str) -> AccountInfo:
+        """Return deterministic account metadata for protocol completeness."""
+        return AccountInfo(key_path="account.key", email=email, server_url=server_url)
 
     async def make_dns_persist_value(
         self,

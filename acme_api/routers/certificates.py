@@ -24,14 +24,14 @@ from acme_api.db import get_db_session
 from acme_api.deployer import DeploymentError
 from acme_api.models.certificate import Certificate, CertificateStatus
 from acme_api.schemas.certificate import CertificateCreate, CertificateRead, CertificateRelease
-from acme_api.services.certificates import (
+from acme_api.services.certificate_contracts import (
     CertificateBackendUnavailableError,
     CertificateConflictError,
     CertificateLifecycleError,
-    CertificateLifecycleService,
     CertificateNotFoundError,
     CertificateNotRenewableError,
 )
+from acme_api.services.certificates import CertificateLifecycleService
 
 router = APIRouter(prefix="/v1/certificates", tags=["Certificates"])
 
