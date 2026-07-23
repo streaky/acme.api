@@ -370,14 +370,16 @@ class CertificateLifecycleService:
             if certificate is None:
                 raise CertificateNotFoundError("Certificate not found.")
 
-            held_statuses = (
+            held_lifecycle_statuses = (
                 CertificateStatus.HELD,
                 CertificateStatus.AUTHORIZATION_READY,
                 CertificateStatus.RELEASED,
             )
-            is_held_request = certificate.status in held_statuses
-            certificate.status = CertificateStatus.CANCELLED if is_held_request else CertificateStatus.REVOKED
-            event_type = "certificate.cancelled" if is_held_request else "certificate.revoked"
+            is_held_lifecycle_request = certificate.status in held_lifecycle_statuses or (
+                certificate.status == CertificateStatus.ISSUING and certificate.release_idempotency_key is not None
+            )
+            certificate.status = CertificateStatus.CANCELLED if is_held_lifecycle_request else CertificateStatus.REVOKED
+            event_type = "certificate.cancelled" if is_held_lifecycle_request else "certificate.revoked"
             await self._record_event(session, certificate, event_type, {"name": certificate.name})
             await session.commit()
             await self._dispatch_webhook(session, event_type, certificate)

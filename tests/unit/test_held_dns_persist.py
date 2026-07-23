@@ -110,6 +110,39 @@ def test_held_dns_persist_survives_restart_and_can_cancel(tmp_path: Path) -> Non
         assert backend.issue_calls == 0
 
 
+def test_cancel_claimed_held_issuance_preserves_cancelled_state(tmp_path: Path) -> None:
+    """A held release claimed for issuance remains a cancellation, not a revocation."""
+    headers = {"Authorization": "Bearer operator-key-12345"}
+    with TestClient(_make_app(tmp_path)) as client:
+        created = client.post(
+            "/v1/certificates",
+            headers=headers,
+            json={
+                "name": "claimed-held-cert",
+                "domains": ["example.com"],
+                "acme_account_ref": "letsencrypt-production",
+                "challenge_method": "dns-persist",
+                "held": True,
+            },
+        )
+        assert created.status_code == 202
+        certificate_id = uuid.UUID(created.json()["id"])
+
+        async def mark_claimed() -> None:
+            async with get_db() as session:
+                certificate = await session.get(Certificate, certificate_id)
+                assert certificate is not None
+                certificate.status = CertificateStatus.ISSUING
+                certificate.release_idempotency_key = "claimed-release"
+                await session.commit()
+
+        asyncio.run(mark_claimed())
+        cancelled = client.delete(f"/v1/certificates/{certificate_id}", headers=headers)
+        assert cancelled.status_code == 204
+        status_response = client.get(f"/v1/certificates/{certificate_id}", headers=headers)
+        assert status_response.json()["status"] == "cancelled"
+
+
 def test_restart_resumes_held_issuance_interrupted_after_claim(tmp_path: Path) -> None:
     """Startup resumes a released request that crashed after becoming issuing."""
     headers = {"Authorization": "Bearer operator-key-12345"}
