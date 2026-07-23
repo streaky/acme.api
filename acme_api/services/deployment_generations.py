@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import datetime
 
@@ -21,9 +22,12 @@ def generation_details(deployed: DeploymentPaths) -> dict[str, object] | None:
             "fullchain": str(deployed.fullchain_path),
             "privkey": str(deployed.privkey_path),
         },
-        "fingerprint_sha256": metadata["fingerprint_sha256"],
+        "fingerprint_sha256": metadata.get(
+            "fingerprint_sha256",
+            hashlib.sha256(deployed.cert_path.read_bytes()).hexdigest(),
+        ),
         "serial": metadata.get("serial"),
-        "subjects": metadata["subjects"],
+        "subjects": metadata.get("subjects", metadata.get("domains", [])),
         "validity": {"not_after": metadata["expires_at"]},
     }
 

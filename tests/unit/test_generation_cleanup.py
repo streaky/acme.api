@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import pathlib
 from datetime import UTC, datetime
+from typing import cast
 
 import pytest
 
@@ -15,6 +17,7 @@ from acme_api.deployer import (
     deploy_certificate_artifacts,
     select_generation,
 )
+from acme_api.services.deployment_generations import generation_details
 
 
 def _source_certificate(tmp_path: pathlib.Path) -> CertExpiry:
@@ -87,6 +90,10 @@ def test_generation_deployment_atomically_migrates_legacy_compatibility_files(tm
         deployment_root=root,
     )
     pathlib.Path(cert.fullchain_path).write_bytes(b"renewed-chain\n")
+    legacy_metadata = cast(dict[str, object], json.loads(legacy.metadata_path.read_text(encoding="utf-8")))
+    legacy_metadata.pop("fingerprint_sha256", None)
+    legacy_metadata.pop("subjects", None)
+    legacy.metadata_path.write_text(json.dumps(legacy_metadata), encoding="utf-8")
     legacy_bytes = legacy.fullchain_path.read_bytes()
 
     deployed = deploy_certificate_artifacts(
@@ -102,4 +109,8 @@ def test_generation_deployment_atomically_migrates_legacy_compatibility_files(tm
     legacy_ids = [path.name for path in (target / "generations").iterdir() if path.name.startswith("legacy-")]
     restored = select_generation(target, legacy_ids[0])
     assert restored.fullchain_path.read_bytes() == legacy_bytes
+    details = generation_details(restored)
+    assert details is not None
+    assert details["subjects"] == ["legacy.example.com"]
+    assert isinstance(details["fingerprint_sha256"], str)
     assert deployed.fullchain_path.read_bytes() == b"renewed-chain\n"
