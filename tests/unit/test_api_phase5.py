@@ -2,169 +2,19 @@
 
 from __future__ import annotations
 
-import datetime as dt
 import uuid
-from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import select
 
-from acme_api.auth.hash import api_key_lookup_hash, hash_api_key
-from acme_api.backend.acmesh_errors import AcmeShError, TerminalAcmeShError, TransientAcmeShError
-from acme_api.backend.dataclasses import CertExpiry, IssuanceResult
-from acme_api.config import (
-    AcmeAccountConfig,
-    AcmeConfig,
-    AppSettings,
-    DatabaseConfig,
-    DeploymentConfig,
-    DnsProviderConfig,
-)
-from acme_api.db import get_db
-from acme_api.main import create_app
-from acme_api.models.api_key import APIKey, APIKeyRole
-
-
-class _ArtifactBackend:
-    """Test backend that writes deployable certificate artifacts."""
-
-    def __init__(self, root: Path) -> None:
-        self._root = root
-        self.issue_calls = 0
-        self.fail_issues = False
-        self.renew_calls = 0
-        self.persist_value_calls = 0
-        self.persist_value_error: AcmeShError | None = None
-        self.persist_value_requests: list[tuple[str, bool]] = []
-
-    async def register_account(self, email: str, server_url: str) -> object:
-        raise NotImplementedError
-
-    async def make_dns_persist_value(
-        self,
-        domain: str,
-        *,
-        wildcard: bool = False,
-        account_key_path: str | None = None,
-        server_url: str | None = None,
-    ) -> str:
-        """Return a stable, account-bound test instruction."""
-        del account_key_path, server_url
-        self.persist_value_calls += 1
-        self.persist_value_requests.append((domain, wildcard))
-        if self.persist_value_error is not None:
-            raise self.persist_value_error
-        return f"persist-value-for-{domain}"
-
-    async def issue_certificate(
-        self,
-        domains: list[str],
-        method: str,
-        challenge_params: dict[str, object],
-        account_key_path: str | None = None,
-        server_url: str | None = None,
-    ) -> IssuanceResult:
-        del method, challenge_params, server_url
-        self.issue_calls += 1
-        if self.fail_issues:
-            raise TransientAcmeShError("DNS propagation may still be in progress")
-        return self._result(domains, "issue", account_key_path)
-
-    async def renew_certificate(
-        self,
-        domains: list[str],
-        force_renewal: bool = False,
-    ) -> IssuanceResult:
-        del force_renewal
-        self.renew_calls += 1
-        return self._result(domains, "renew", "account.key")
-
-    async def get_certificate_expiry(self, cert_path: str) -> CertExpiry:
-        raise NotImplementedError
-
-    def _result(
-        self,
-        domains: list[str],
-        operation: str,
-        account_key_path: str | None,
-    ) -> IssuanceResult:
-        directory = self._root / operation / str(self.issue_calls + self.renew_calls)
-        directory.mkdir(parents=True, exist_ok=True)
-        paths = {
-            "cert": directory / "cert.pem",
-            "key": directory / "privkey.pem",
-            "chain": directory / "chain.pem",
-            "fullchain": directory / "fullchain.pem",
-        }
-        for name, path in paths.items():
-            path.write_text(f"{operation}-{name}", encoding="utf-8")
-        return IssuanceResult(
-            account_key_path=account_key_path or "account.key",
-            cert=CertExpiry(
-                cert_path=str(paths["cert"]),
-                privkey_path=str(paths["key"]),
-                chain_path=str(paths["chain"]),
-                fullchain_path=str(paths["fullchain"]),
-                expires_at=dt.datetime.now(dt.UTC) + dt.timedelta(days=90),
-            ),
-            domains=domains,
-        )
-
-
-def _make_app(tmp_path: Path) -> FastAPI:
-    env_file = tmp_path / "cloudflare.env"
-    env_file.write_text("CF_Token=test\n", encoding="utf-8")
-    settings = AppSettings(
-        database=DatabaseConfig(url=f"sqlite+aiosqlite:///{tmp_path}/test.db"),
-        deployment=DeploymentConfig(directory=tmp_path / "certs"),
-        acme=AcmeConfig(home_dir=tmp_path / "acmesh"),
-        dns_providers=[
-            DnsProviderConfig(
-                name="cloudflare-main",
-                provider_name="cloudflare",
-                env_vars_file_path=env_file,
-            )
-        ],
-        acme_accounts=[AcmeAccountConfig(name="letsencrypt-production")],
-    )
-    app = create_app(settings=settings)
-
-    original_lifespan = app.router.lifespan_context
-
-    @asynccontextmanager
-    async def seeded_lifespan(application: FastAPI) -> AsyncGenerator[None]:
-        async with original_lifespan(application):
-            async with get_db() as session:
-                has_client = await session.scalar(select(APIKey.id).limit(1))
-                if has_client is None:
-                    for role, raw_key in (
-                        (APIKeyRole.ADMIN, "admin-key-12345"),
-                        (APIKeyRole.OPERATOR, "operator-key-12345"),
-                        (APIKeyRole.READONLY, "readonly-key-12345"),
-                    ):
-                        session.add(
-                            APIKey(
-                                name=f"test-{role.value}",
-                                hashed_key=hash_api_key(raw_key),
-                                key_lookup_hash=api_key_lookup_hash(raw_key),
-                                role=role,
-                            )
-                        )
-                    await session.commit()
-            yield
-
-    app.router.lifespan_context = seeded_lifespan
-    app.state.acme_backend = _ArtifactBackend(tmp_path / "acme-artifacts")
-    return app
+from acme_api.backend.acmesh_errors import TerminalAcmeShError, TransientAcmeShError
+from tests.helpers.api import ArtifactBackend, make_api_app
 
 
 def test_certificate_lifecycle_endpoints(tmp_path: Path) -> None:
     """Create, list, read, renew, and revoke a certificate."""
     headers = {"Authorization": "Bearer operator-key-12345"}
-    with TestClient(_make_app(tmp_path)) as client:
+    with TestClient(make_api_app(tmp_path)) as client:
         created = client.post(
             "/v1/certificates",
             headers=headers,
@@ -204,9 +54,9 @@ def test_certificate_lifecycle_endpoints(tmp_path: Path) -> None:
 def test_dns_persist_lifecycle_endpoints(tmp_path: Path) -> None:
     """DNS Persist requests wait for explicit authorization and retain instructions."""
     headers = {"Authorization": "Bearer operator-key-12345"}
-    app = _make_app(tmp_path)
+    app = make_api_app(tmp_path)
     backend = app.state.acme_backend
-    assert isinstance(backend, _ArtifactBackend)
+    assert isinstance(backend, ArtifactBackend)
     with TestClient(app) as client:
         payload = {
             "name": "manual-example-cert",
@@ -254,9 +104,9 @@ def test_dns_persist_recreation_of_revoked_request_conflicts(tmp_path: Path) -> 
         "acme_account_ref": "letsencrypt-production",
         "challenge_method": "dns-persist",
     }
-    app = _make_app(tmp_path)
+    app = make_api_app(tmp_path)
     backend = app.state.acme_backend
-    assert isinstance(backend, _ArtifactBackend)
+    assert isinstance(backend, ArtifactBackend)
     with TestClient(app) as client:
         created = client.post("/v1/certificates", headers=headers, json=payload)
         assert created.status_code == 202
@@ -287,9 +137,9 @@ def test_dns_persist_value_generation_errors_are_controlled(tmp_path: Path) -> N
         (TransientAcmeShError("ACME server unavailable"), 503),
     )
 
-    app = _make_app(tmp_path)
+    app = make_api_app(tmp_path)
     backend = app.state.acme_backend
-    assert isinstance(backend, _ArtifactBackend)
+    assert isinstance(backend, ArtifactBackend)
     for error, expected_status in cases:
         backend.persist_value_error = error
         with TestClient(app) as client:
@@ -303,9 +153,9 @@ def test_dns_persist_value_generation_errors_are_controlled(tmp_path: Path) -> N
 
 def test_dns_persist_rejects_sans_outside_primary_scope(tmp_path: Path) -> None:
     """DNS Persist refuses SANs that a single returned TXT record cannot authorize."""
-    app = _make_app(tmp_path)
+    app = make_api_app(tmp_path)
     backend = app.state.acme_backend
-    assert isinstance(backend, _ArtifactBackend)
+    assert isinstance(backend, ArtifactBackend)
     with TestClient(app) as client:
         response = client.post(
             "/v1/certificates",
@@ -327,9 +177,9 @@ def test_dns_persist_rejects_sans_outside_primary_scope(tmp_path: Path) -> None:
 
 def test_wildcard_dns_persist_uses_base_domain_policy(tmp_path: Path) -> None:
     """Wildcard requests publish one base-domain TXT record with wildcard policy."""
-    app = _make_app(tmp_path)
+    app = make_api_app(tmp_path)
     backend = app.state.acme_backend
-    assert isinstance(backend, _ArtifactBackend)
+    assert isinstance(backend, ArtifactBackend)
     with TestClient(app) as client:
         response = client.post(
             "/v1/certificates",
@@ -352,9 +202,9 @@ def test_wildcard_dns_persist_uses_base_domain_policy(tmp_path: Path) -> None:
 def test_dns_persist_dns_failure_can_be_authorized_again(tmp_path: Path) -> None:
     """A DNS error retains the durable instruction and allows an explicit retry."""
     headers = {"Authorization": "Bearer operator-key-12345"}
-    app = _make_app(tmp_path)
+    app = make_api_app(tmp_path)
     backend = app.state.acme_backend
-    assert isinstance(backend, _ArtifactBackend)
+    assert isinstance(backend, ArtifactBackend)
     backend.fail_issues = True
     with TestClient(app) as client:
         created = client.post(
@@ -389,16 +239,16 @@ def test_dns_persist_request_survives_app_restart(tmp_path: Path) -> None:
         "acme_account_ref": "letsencrypt-production",
         "challenge_method": "dns-persist",
     }
-    first_app = _make_app(tmp_path)
+    first_app = make_api_app(tmp_path)
     first_backend = first_app.state.acme_backend
-    assert isinstance(first_backend, _ArtifactBackend)
+    assert isinstance(first_backend, ArtifactBackend)
     with TestClient(first_app) as client:
         original = client.post("/v1/certificates", headers=headers, json=payload).json()
     assert first_backend.persist_value_calls == 1
 
-    restarted_app = _make_app(tmp_path)
+    restarted_app = make_api_app(tmp_path)
     restarted_backend = restarted_app.state.acme_backend
-    assert isinstance(restarted_backend, _ArtifactBackend)
+    assert isinstance(restarted_backend, ArtifactBackend)
     with TestClient(restarted_app) as client:
         resumed = client.post("/v1/certificates", headers=headers, json=payload).json()
     assert resumed["id"] == original["id"]
@@ -409,7 +259,7 @@ def test_dns_persist_request_survives_app_restart(tmp_path: Path) -> None:
 def test_dns_persist_authorization_reports_invalid_requests(tmp_path: Path) -> None:
     """Authorization and account validation expose deliberate client errors."""
     headers = {"Authorization": "Bearer operator-key-12345"}
-    with TestClient(_make_app(tmp_path)) as client:
+    with TestClient(make_api_app(tmp_path)) as client:
         unknown_account = client.post(
             "/v1/certificates",
             headers=headers,
@@ -441,7 +291,7 @@ def test_config_and_events_endpoints(tmp_path: Path) -> None:
     """List config-owned integrations and audit events."""
     headers = {"Authorization": "Bearer readonly-key-12345"}
     operator_headers = {"Authorization": "Bearer operator-key-12345"}
-    with TestClient(_make_app(tmp_path)) as client:
+    with TestClient(make_api_app(tmp_path)) as client:
         assert client.get("/v1/accounts", headers=headers).json()[0]["name"] == ("letsencrypt-production")
         assert client.get("/v1/providers", headers=headers).json()[0]["name"] == ("cloudflare-main")
         client.post(
@@ -462,7 +312,7 @@ def test_config_and_events_endpoints(tmp_path: Path) -> None:
 
 def test_admin_client_management_requires_admin_and_hides_hashes(tmp_path: Path) -> None:
     """Admins can manage all roles without exposing persisted credential hashes."""
-    with TestClient(_make_app(tmp_path)) as client:
+    with TestClient(make_api_app(tmp_path)) as client:
         admin_headers = {"Authorization": "Bearer admin-key-12345"}
         assert client.get("/v1/admin/clients").status_code == 401
         assert (

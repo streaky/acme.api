@@ -10,15 +10,15 @@ from fastapi.testclient import TestClient
 
 from acme_api.db import get_db
 from acme_api.models.certificate import Certificate, CertificateStatus
-from tests.unit.test_api_phase5 import _ArtifactBackend, _make_app
+from tests.helpers.api import ArtifactBackend, make_api_app
 
 
 def test_held_dns_persist_requires_current_keyed_release(tmp_path: Path) -> None:
     """Held DNS Persist requests cannot issue until their current revision is released."""
     headers = {"Authorization": "Bearer operator-key-12345"}
-    app = _make_app(tmp_path)
+    app = make_api_app(tmp_path)
     backend = app.state.acme_backend
-    assert isinstance(backend, _ArtifactBackend)
+    assert isinstance(backend, ArtifactBackend)
     with TestClient(app) as client:
         created = client.post(
             "/v1/certificates",
@@ -70,7 +70,7 @@ def test_held_dns_persist_requires_current_keyed_release(tmp_path: Path) -> None
 def test_held_dns_persist_survives_restart_and_can_cancel(tmp_path: Path) -> None:
     """A persisted held request remains non-issuing across a service restart."""
     headers = {"Authorization": "Bearer operator-key-12345"}
-    with TestClient(_make_app(tmp_path)) as client:
+    with TestClient(make_api_app(tmp_path)) as client:
         created = client.post(
             "/v1/certificates",
             headers=headers,
@@ -85,9 +85,9 @@ def test_held_dns_persist_survives_restart_and_can_cancel(tmp_path: Path) -> Non
         assert created.status_code == 202
         certificate_id = created.json()["id"]
 
-    restarted = _make_app(tmp_path)
+    restarted = make_api_app(tmp_path)
     backend = restarted.state.acme_backend
-    assert isinstance(backend, _ArtifactBackend)
+    assert isinstance(backend, ArtifactBackend)
     with TestClient(restarted) as client:
         persisted = client.get(f"/v1/certificates/{certificate_id}", headers=headers)
         assert persisted.json()["status"] == "held"
@@ -113,7 +113,7 @@ def test_held_dns_persist_survives_restart_and_can_cancel(tmp_path: Path) -> Non
 def test_cancel_claimed_held_issuance_preserves_cancelled_state(tmp_path: Path) -> None:
     """A held release claimed for issuance remains a cancellation, not a revocation."""
     headers = {"Authorization": "Bearer operator-key-12345"}
-    with TestClient(_make_app(tmp_path)) as client:
+    with TestClient(make_api_app(tmp_path)) as client:
         created = client.post(
             "/v1/certificates",
             headers=headers,
@@ -146,7 +146,7 @@ def test_cancel_claimed_held_issuance_preserves_cancelled_state(tmp_path: Path) 
 def test_restart_resumes_held_issuance_interrupted_after_claim(tmp_path: Path) -> None:
     """Startup resumes a released request that crashed after becoming issuing."""
     headers = {"Authorization": "Bearer operator-key-12345"}
-    with TestClient(_make_app(tmp_path)) as client:
+    with TestClient(make_api_app(tmp_path)) as client:
         created = client.post(
             "/v1/certificates",
             headers=headers,
@@ -171,9 +171,9 @@ def test_restart_resumes_held_issuance_interrupted_after_claim(tmp_path: Path) -
 
         asyncio.run(simulate_interrupted_issue())
 
-    restarted = _make_app(tmp_path)
+    restarted = make_api_app(tmp_path)
     backend = restarted.state.acme_backend
-    assert isinstance(backend, _ArtifactBackend)
+    assert isinstance(backend, ArtifactBackend)
     with TestClient(restarted) as client:
         recovered = client.get(f"/v1/certificates/{certificate_id}", headers=headers)
         assert recovered.json()["status"] == "valid"
