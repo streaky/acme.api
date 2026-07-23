@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Callable
-from pathlib import Path
 from typing import Protocol
 
 from sqlalchemy import select, update
@@ -234,7 +233,6 @@ class CertificateLifecycleService:
                 raise CertificateLifecycleError("Certificate does not use DNS Persist.")
             if certificate.release_idempotency_key == idempotency_key:
                 return certificate, False
-
             result = await session.execute(
                 update(Certificate)
                 .where(
@@ -289,14 +287,21 @@ class CertificateLifecycleService:
             await self._issue_and_deploy(session, certificate, method="dns-persist")
 
     async def resume_released_dns_persist_certificates(self) -> None:
-        """Resume releases persisted before a process stopped."""
+        """Resume released requests, including issuance interrupted by a process stop."""
         async with self._session_factory() as session:
             result = await session.execute(
-                select(Certificate.id).where(Certificate.status == CertificateStatus.RELEASED)
+                select(Certificate.id, Certificate.status).where(
+                    Certificate.challenge_method == "dns-persist",
+                    Certificate.release_idempotency_key.is_not(None),
+                    Certificate.status.in_((CertificateStatus.RELEASED, CertificateStatus.ISSUING)),
+                )
             )
-            certificate_ids = list(result.scalars())
-        for certificate_id in certificate_ids:
-            await self.issue_released_dns_persist_certificate(certificate_id)
+            certificates = list(result.all())
+        for certificate_id, certificate_status in certificates:
+            if certificate_status == CertificateStatus.RELEASED:
+                await self.issue_released_dns_persist_certificate(certificate_id)
+            else:
+                await self.issue_dns_persist_certificate(certificate_id)
 
     async def _issue_and_deploy(
         self,
@@ -462,14 +467,12 @@ async def expiring_event_exists(
     session: AsyncSession,
     certificate_id: uuid.UUID,
 ) -> bool:
-    """Return true when an expiring event was already recorded for a certificate."""
-    result = await session.execute(
-        select(Event).where(
-            Event.certificate_id == certificate_id,
-            Event.event_type == "certificate.expiring",
-        )
+    result = await session.scalar(
+        select(Event.id)
+        .where(Event.certificate_id == certificate_id, Event.event_type == "certificate.expiring")
+        .limit(1)
     )
-    return result.scalar_one_or_none() is not None
+    return result is not None
 
 
 def _dns_persist_scope(domains: list[str]) -> tuple[str, bool]:
@@ -486,14 +489,10 @@ def _dns_persist_scope(domains: list[str]) -> tuple[str, bool]:
 
 
 def _account_key_path(account: AcmeAccountConfig) -> str | None:
-    if account.account_key_path is None:
-        return None
-    return str(Path(account.account_key_path))
+    return str(account.account_key_path) if account.account_key_path is not None else None
 
 
 def _error_category(error: Exception) -> str:
     if isinstance(error, TransientAcmeShError):
         return "transient"
-    if isinstance(error, AcmeShError):
-        return "terminal"
-    return "deployment"
+    return "terminal" if isinstance(error, AcmeShError) else "deployment"
