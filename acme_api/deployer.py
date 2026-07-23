@@ -5,6 +5,7 @@ from __future__ import annotations
 import dataclasses as dc
 import hashlib
 import json
+import logging
 import os
 import shutil
 import stat
@@ -21,6 +22,8 @@ CHAIN_FILE_NAME = "chain.pem"
 FULLCHAIN_FILE_NAME = "fullchain.pem"
 PRIVKEY_FILE_NAME = "privkey.pem"
 METADATA_FILE_NAME = "metadata.json"
+
+LOGGER = logging.getLogger(__name__)
 
 
 @dc.dataclass(frozen=True)
@@ -278,7 +281,15 @@ def _deploy_generation(  # pylint: disable=too-many-arguments
         os.replace(staging_dir, generation_dir)
         _fsync_directory(generations_dir)
         _select_generation_directory(target_dir, generation_id)
-        cleanup_generations(target_dir, retention_count=retention_count, retention_days=retention_days)
+        try:
+            cleanup_generations(target_dir, retention_count=retention_count, retention_days=retention_days)
+        except OSError:
+            LOGGER.warning(
+                "Failed to clean up obsolete certificate generations for %s after publishing %s.",
+                target_dir,
+                generation_id,
+                exc_info=True,
+            )
     except (OSError, OverflowError) as exc:
         raise DeploymentError(f"failed to publish certificate generation: {exc}") from exc
     finally:
