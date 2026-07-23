@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -342,3 +343,49 @@ def test_admin_client_management_requires_admin_and_hides_hashes(tmp_path: Path)
         revoked = client.post(f"/v1/admin/clients/{client_id}/revoke", headers=admin_headers)
         assert revoked.status_code == 200
         assert revoked.json()["is_active"] is False
+
+
+def test_generation_selection_restores_a_retained_deployment(tmp_path: Path) -> None:
+    """Operators can idempotently restore a retained immutable deployment."""
+    headers = {"Authorization": "Bearer operator-key-12345"}
+    with TestClient(make_api_app(tmp_path, generation_aware=True)) as client:
+        created = client.post(
+            "/v1/certificates",
+            headers=headers,
+            json={
+                "name": "generation-example",
+                "domains": ["generation.example.com"],
+                "acme_account_ref": "letsencrypt-production",
+                "dns_provider_ref": "cloudflare-main",
+            },
+        )
+        assert created.status_code == 202
+        certificate_id = created.json()["id"]
+        issued = client.get(f"/v1/certificates/{certificate_id}", headers=headers)
+        assert issued.status_code == 200
+        first = issued.json()["current_generation_id"]
+        renewed = client.post(f"/v1/certificates/{certificate_id}/renew", headers=headers)
+        assert renewed.status_code == 202
+        renewed_read = client.get(f"/v1/certificates/{certificate_id}", headers=headers)
+        assert renewed_read.status_code == 200
+        second = renewed_read.json()["current_generation_id"]
+        assert first != second
+
+        selected = client.post(
+            f"/v1/certificates/{certificate_id}/generations/select",
+            headers={**headers, "Idempotency-Key": "select-first"},
+            json={"generation_id": first},
+        )
+        assert selected.status_code == 200, selected.text
+        assert selected.json()["current_generation_id"] == first
+        assert selected.json()["current_generation_details"]["generation_id"] == first
+        selected_expiry = datetime.fromisoformat(selected.json()["expiry_date"])
+        generation_validity = selected.json()["current_generation_details"]["validity"]["not_after"]
+        generation_expiry = datetime.fromisoformat(generation_validity)
+        assert selected_expiry == generation_expiry.replace(tzinfo=None)
+        repeated = client.post(
+            f"/v1/certificates/{certificate_id}/generations/select",
+            headers={**headers, "Idempotency-Key": "select-first"},
+            json={"generation_id": first},
+        )
+        assert repeated.status_code == 200

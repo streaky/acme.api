@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import dataclasses as dc
+import hashlib
 import json
+import logging
 import os
 import shutil
 import stat
 import tempfile
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from acme_api.backend.dataclasses import CertExpiry, IssuanceResult
 
@@ -19,6 +22,8 @@ CHAIN_FILE_NAME = "chain.pem"
 FULLCHAIN_FILE_NAME = "fullchain.pem"
 PRIVKEY_FILE_NAME = "privkey.pem"
 METADATA_FILE_NAME = "metadata.json"
+
+LOGGER = logging.getLogger(__name__)
 
 
 @dc.dataclass(frozen=True)
@@ -31,6 +36,7 @@ class DeploymentPaths:
     fullchain_path: Path
     privkey_path: Path
     metadata_path: Path
+    generation_id: str | None = None
 
 
 @dc.dataclass(frozen=True)
@@ -64,6 +70,15 @@ class DeploymentMetadata:
 
 
 @dc.dataclass(frozen=True)
+class GenerationOptions:
+    """Immutable-generation publication and retention settings."""
+
+    enabled: bool = False
+    retention_count: int | None = None
+    retention_days: int | None = None
+
+
+@dc.dataclass(frozen=True)
 class DeploymentOptions:
     """Options that control certificate deployment behavior."""
 
@@ -72,6 +87,7 @@ class DeploymentOptions:
     artifact_group_id: int | None = None
     issuer: str | None = None
     allowed_source_roots: list[Path] | None = None
+    generation: GenerationOptions = dc.field(default_factory=GenerationOptions)
 
 
 class DeploymentError(Exception):
@@ -84,19 +100,7 @@ def deploy_issuance_result(
     *,
     options: DeploymentOptions | None = None,
 ) -> DeploymentPaths:
-    """Deploy files from an ACME issuance or renewal result.
-
-    Args:
-        result: Backend result containing source artifact paths and issued domains.
-        deployment_root: Root directory such as ``/certificates``.
-        options: Optional deployment behavior overrides.
-
-    Returns:
-        Paths to the deployed certificate artifacts.
-
-    Raises:
-        DeploymentError: If domains are missing, unsafe, or source files are absent.
-    """
+    """Deploy artifacts from an ACME issuance or renewal result."""
     options = options or DeploymentOptions()
     cert = result.cert
     metadata = DeploymentMetadata(
@@ -113,48 +117,63 @@ def deploy_issuance_result(
         domains=result.domains,
         deployment_root=deployment_root,
         metadata=metadata,
-        permissions_cert=options.permissions_cert,
-        permissions_key=options.permissions_key,
-        artifact_group_id=options.artifact_group_id,
-        allowed_source_roots=options.allowed_source_roots,
+        options=DeploymentOptions(
+            permissions_cert=options.permissions_cert,
+            permissions_key=options.permissions_key,
+            artifact_group_id=options.artifact_group_id,
+            allowed_source_roots=options.allowed_source_roots,
+            generation=options.generation,
+        ),
     )
 
 
-def deploy_certificate_artifacts(  # pylint: disable=too-many-arguments
+def deploy_certificate_artifacts(
     *,
     cert: CertExpiry,
     domains: list[str],
     deployment_root: Path,
     metadata: DeploymentMetadata | None = None,
-    permissions_cert: int = 0o644,
-    permissions_key: int = 0o600,
-    artifact_group_id: int | None = None,
-    allowed_source_roots: list[Path] | None = None,
+    options: DeploymentOptions | None = None,
 ) -> DeploymentPaths:
-    """Atomically deploy certificate files under the primary domain directory."""
+    """Deploy certificate artifacts, optionally as an immutable generation."""
+    options = options or DeploymentOptions()
+    generation = options.generation
+    if generation.retention_count is not None and generation.retention_count < 1:
+        raise DeploymentError("generation retention count must be at least one")
+    if generation.retention_days is not None and generation.retention_days < 0:
+        raise DeploymentError("generation retention days cannot be negative")
     temp_dir: Path | None = None
     try:
         deployment_root.mkdir(parents=True, exist_ok=True)
-        _configure_consumer_directories(deployment_root, artifact_group_id)
+        _configure_consumer_directories(deployment_root, options.artifact_group_id)
         primary_domain = _primary_domain(domains)
         target_dir = deployment_root / deployment_directory_name(primary_domain)
         target_dir.mkdir(parents=True, exist_ok=True)
-        _configure_consumer_directories(target_dir, artifact_group_id)
-
+        _configure_consumer_directories(target_dir, options.artifact_group_id)
         source_paths = _source_paths(cert)
-        _validate_source_files(source_paths, allowed_source_roots)
+        _validate_source_files(source_paths, options.allowed_source_roots)
         metadata = metadata or _metadata_for_cert(cert, domains, primary_domain)
+        if generation.enabled:
+            return _deploy_generation(
+                target_dir=target_dir,
+                source_paths=source_paths,
+                metadata=metadata,
+                permissions_cert=options.permissions_cert,
+                permissions_key=options.permissions_key,
+                artifact_group_id=options.artifact_group_id,
+                retention_count=generation.retention_count,
+                retention_days=generation.retention_days,
+            )
         temp_dir = Path(tempfile.mkdtemp(prefix=".deploy-", dir=target_dir))
         _write_temp_artifacts(
             temp_dir=temp_dir,
             source_paths=source_paths,
             metadata=metadata,
-            permissions_cert=permissions_cert,
-            permissions_key=permissions_key,
-            artifact_group_id=artifact_group_id,
+            permissions_cert=options.permissions_cert,
+            permissions_key=options.permissions_key,
+            artifact_group_id=options.artifact_group_id,
         )
         _fsync_directory(temp_dir)
-
         _replace_artifacts(temp_dir, target_dir)
         _fsync_directory(target_dir)
     except (OSError, OverflowError) as exc:
@@ -163,14 +182,7 @@ def deploy_certificate_artifacts(  # pylint: disable=too-many-arguments
         if temp_dir is not None:
             shutil.rmtree(temp_dir, ignore_errors=True)
 
-    return DeploymentPaths(
-        directory=target_dir,
-        cert_path=target_dir / CERT_FILE_NAME,
-        chain_path=target_dir / CHAIN_FILE_NAME,
-        fullchain_path=target_dir / FULLCHAIN_FILE_NAME,
-        privkey_path=target_dir / PRIVKEY_FILE_NAME,
-        metadata_path=target_dir / METADATA_FILE_NAME,
-    )
+    return _deployment_paths(target_dir)
 
 
 # pylint: disable-next=too-many-arguments  # Atomic staging needs explicit artifact access controls.
@@ -183,16 +195,13 @@ def _write_temp_artifacts(
     permissions_key: int,
     artifact_group_id: int | None,
 ) -> None:
-    """Write all deployment artifacts into the temporary directory."""
     for file_name, source_path in source_paths.items():
         mode = permissions_key if file_name == PRIVKEY_FILE_NAME else permissions_cert
         _copy_fsync_chmod(source_path, temp_dir / f"{file_name}.tmp", mode, artifact_group_id)
-
-    metadata_bytes = json.dumps(
-        metadata.to_json_dict(),
-        indent=2,
-        sort_keys=True,
-    ).encode("utf-8")
+    metadata_payload = metadata.to_json_dict()
+    metadata_payload["fingerprint_sha256"] = hashlib.sha256(source_paths[CERT_FILE_NAME].read_bytes()).hexdigest()
+    metadata_payload["subjects"] = metadata.domains
+    metadata_bytes = json.dumps(metadata_payload, indent=2, sort_keys=True).encode("utf-8")
     _write_fsync_chmod(
         temp_dir / f"{METADATA_FILE_NAME}.tmp",
         metadata_bytes,
@@ -202,7 +211,6 @@ def _write_temp_artifacts(
 
 
 def _replace_artifacts(temp_dir: Path, target_dir: Path) -> None:
-    """Atomically replace target artifacts with staged temporary files."""
     for file_name in (
         CERT_FILE_NAME,
         CHAIN_FILE_NAME,
@@ -213,8 +221,178 @@ def _replace_artifacts(temp_dir: Path, target_dir: Path) -> None:
         os.replace(temp_dir / f"{file_name}.tmp", target_dir / file_name)
 
 
+def _deployment_paths(directory: Path, generation_id: str | None = None) -> DeploymentPaths:
+    return DeploymentPaths(
+        directory=directory,
+        cert_path=directory / CERT_FILE_NAME,
+        chain_path=directory / CHAIN_FILE_NAME,
+        fullchain_path=directory / FULLCHAIN_FILE_NAME,
+        privkey_path=directory / PRIVKEY_FILE_NAME,
+        metadata_path=directory / METADATA_FILE_NAME,
+        generation_id=generation_id,
+    )
+
+
+def _deploy_generation(  # pylint: disable=too-many-arguments
+    *,
+    target_dir: Path,
+    source_paths: dict[str, Path],
+    metadata: DeploymentMetadata,
+    permissions_cert: int,
+    permissions_key: int,
+    artifact_group_id: int | None,
+    retention_count: int | None,
+    retention_days: int | None,
+) -> DeploymentPaths:
+    generations_dir = target_dir / "generations"
+    generations_dir.mkdir(exist_ok=True)
+    _configure_consumer_directories(generations_dir, artifact_group_id)
+    generation_id = uuid4().hex
+    staging_dir = Path(tempfile.mkdtemp(prefix=".generation-", dir=generations_dir))
+    _configure_consumer_directories(staging_dir, artifact_group_id)
+    generation_dir = generations_dir / generation_id
+    try:
+        _write_temp_artifacts(
+            temp_dir=staging_dir,
+            source_paths=source_paths,
+            metadata=metadata,
+            permissions_cert=permissions_cert,
+            permissions_key=permissions_key,
+            artifact_group_id=artifact_group_id,
+        )
+        _replace_artifacts(staging_dir, staging_dir)
+        _fsync_directory(staging_dir)
+        os.replace(staging_dir, generation_dir)
+        _fsync_directory(generations_dir)
+        _migrate_legacy_compatibility_links(target_dir, generations_dir, artifact_group_id)
+        _select_generation_directory(target_dir, generation_id)
+        _ensure_compatibility_links(target_dir)
+        try:
+            cleanup_generations(target_dir, retention_count=retention_count, retention_days=retention_days)
+        except OSError:
+            LOGGER.warning(
+                "Failed to clean up obsolete certificate generations for %s after publishing %s.",
+                target_dir,
+                generation_id,
+                exc_info=True,
+            )
+    except (OSError, OverflowError) as exc:
+        raise DeploymentError(f"failed to publish certificate generation: {exc}") from exc
+    finally:
+        if staging_dir.exists():
+            shutil.rmtree(staging_dir, ignore_errors=True)
+    return _deployment_paths(generation_dir, generation_id)
+
+
+def select_generation(target_dir: Path, generation_id: str) -> DeploymentPaths:
+    """Atomically make one retained generation current."""
+    generation_dir = _retained_generation_directory(target_dir, generation_id)
+    if not generation_dir.is_dir():
+        raise DeploymentError(f"retained generation does not exist: {generation_id}")
+    _select_generation_directory(target_dir, generation_id)
+    return _deployment_paths(generation_dir, generation_id)
+
+
+def pin_generation(target_dir: Path, generation_id: str) -> None:
+    """Protect one retained generation from retention cleanup."""
+    generation_dir = _retained_generation_directory(target_dir, generation_id)
+    if not generation_dir.is_dir():
+        raise DeploymentError(f"retained generation does not exist: {generation_id}")
+    pinned_dir = target_dir / ".pinned-generations"
+    pinned_dir.mkdir(exist_ok=True)
+    (pinned_dir / generation_id).touch(exist_ok=True)
+    _fsync_directory(pinned_dir)
+
+
+def _retained_generation_directory(target_dir: Path, generation_id: str) -> Path:
+    if not generation_id or generation_id in {".", ".."} or Path(generation_id).name != generation_id:
+        raise DeploymentError(f"retained generation does not exist: {generation_id}")
+    return target_dir / "generations" / generation_id
+
+
+def _select_generation_directory(target_dir: Path, generation_id: str) -> None:
+    current_link = target_dir / "current"
+    pending_link = target_dir / ".current.pending"
+    pending_link.unlink(missing_ok=True)
+    pending_link.symlink_to(Path("generations") / generation_id)
+    os.replace(pending_link, current_link)
+    _fsync_directory(target_dir)
+
+
+def _migrate_legacy_compatibility_links(
+    target_dir: Path,
+    generations_dir: Path,
+    artifact_group_id: int | None,
+) -> None:
+    filenames = (CERT_FILE_NAME, CHAIN_FILE_NAME, FULLCHAIN_FILE_NAME, PRIVKEY_FILE_NAME, METADATA_FILE_NAME)
+    paths = tuple(target_dir / filename for filename in filenames)
+    if not any(path.exists() or path.is_symlink() for path in paths):
+        return
+    if all(path.is_symlink() for path in paths):
+        return
+    legacy_id = f"legacy-{uuid4().hex}"
+    staging_dir = Path(tempfile.mkdtemp(prefix=".legacy-", dir=generations_dir))
+    legacy_dir = generations_dir / legacy_id
+    try:
+        _configure_consumer_directories(staging_dir, artifact_group_id)
+        for filename in filenames:
+            os.link(target_dir / filename, staging_dir / filename)
+        _fsync_directory(staging_dir)
+        os.replace(staging_dir, legacy_dir)
+        _fsync_directory(generations_dir)
+        _select_generation_directory(target_dir, legacy_id)
+        _ensure_compatibility_links(target_dir)
+    finally:
+        if staging_dir.exists():
+            shutil.rmtree(staging_dir, ignore_errors=True)
+
+
+def _ensure_compatibility_links(target_dir: Path) -> None:
+    filenames = (CERT_FILE_NAME, CHAIN_FILE_NAME, FULLCHAIN_FILE_NAME, PRIVKEY_FILE_NAME, METADATA_FILE_NAME)
+    for filename in filenames:
+        compatibility_link = target_dir / filename
+        if compatibility_link.is_symlink():
+            continue
+        pending_link = target_dir / f".{filename}.pending"
+        pending_link.symlink_to(Path("current") / filename)
+        os.replace(pending_link, compatibility_link)
+    _fsync_directory(target_dir)
+
+
+def cleanup_generations(
+    target_dir: Path,
+    *,
+    retention_count: int | None,
+    retention_days: int | None,
+) -> list[str]:
+    if retention_count is None and retention_days is None:
+        return []
+    generations_dir = target_dir / "generations"
+    if not generations_dir.is_dir():
+        return []
+    current_id = os.readlink(target_dir / "current").split("/")[-1] if (target_dir / "current").is_symlink() else None
+    pinned_dir = target_dir / ".pinned-generations"
+    pinned_ids: set[str] = {path.name for path in pinned_dir.iterdir()} if pinned_dir.is_dir() else set()
+    generations = sorted(
+        (path for path in generations_dir.iterdir() if path.is_dir() and not path.name.startswith(".")),
+        key=lambda path: (path.stat().st_mtime_ns, path.name),
+        reverse=True,
+    )
+    cutoff = datetime.now(UTC) - timedelta(days=retention_days) if retention_days is not None else None
+    removed: list[str] = []
+    for index, generation in enumerate(generations):
+        exceeds_count = retention_count is None or index >= retention_count
+        exceeds_age = cutoff is None or datetime.fromtimestamp(generation.stat().st_mtime, UTC) < cutoff
+        if generation.name == current_id or generation.name in pinned_ids or not (exceeds_count and exceeds_age):
+            continue
+        shutil.rmtree(generation)
+        removed.append(generation.name)
+    if removed:
+        _fsync_directory(generations_dir)
+    return removed
+
+
 def _source_paths(cert: CertExpiry) -> dict[str, Path]:
-    """Return deployment destination names mapped to source artifact paths."""
     return {
         CERT_FILE_NAME: Path(cert.cert_path),
         CHAIN_FILE_NAME: Path(cert.chain_path),
@@ -228,7 +406,6 @@ def _metadata_for_cert(
     domains: list[str],
     primary_domain: str,
 ) -> DeploymentMetadata:
-    """Build default deployment metadata from certificate artifacts."""
     return DeploymentMetadata(
         primary_domain=primary_domain,
         domains=list(domains),
@@ -240,19 +417,13 @@ def _metadata_for_cert(
 
 
 def _primary_domain(domains: list[str]) -> str:
-    """Return the SAN primary domain."""
     if not domains:
         raise DeploymentError("at least one domain is required for deployment")
     return domains[0]
 
 
 def deployment_directory_name(primary_domain: str) -> str:
-    """Return the collision-free deployment directory for a primary domain.
-
-    Wildcards use an ``@wildcard@.`` prefix. ``@`` is not valid in a certificate
-    DNS name, making the mapping distinct from every non-wildcard identifier.
-    The returned value is relative to the configured deployment root.
-    """
+    """Return a collision-free deployment directory for a primary domain."""
     if "/" in primary_domain or "\\" in primary_domain or primary_domain in {"", ".", ".."}:
         raise DeploymentError(f"unsafe primary domain for deployment: {primary_domain!r}")
     if primary_domain.startswith("*."):
@@ -264,7 +435,6 @@ def _validate_source_files(
     source_paths: dict[str, Path],
     allowed_source_roots: list[Path] | None = None,
 ) -> None:
-    """Ensure all source artifact paths are safe regular files."""
     normalized_roots = [root.resolve() for root in (allowed_source_roots or [])]
     missing = [f"{name}: {path}" for name, path in source_paths.items() if not path.is_file()]
     if missing:
@@ -291,13 +461,11 @@ def _validate_source_files(
 
 
 def _copy_fsync_chmod(source: Path, destination: Path, mode: int, artifact_group_id: int | None) -> None:
-    """Copy a source file to destination, flush it, fsync it, and apply access controls."""
     with source.open("rb") as src:
         _write_fsync_chmod(destination, src.read(), mode, artifact_group_id)
 
 
 def _write_fsync_chmod(destination: Path, data: bytes, mode: int, artifact_group_id: int | None) -> None:
-    """Write bytes durably to a destination path with the requested access controls."""
     with destination.open("wb") as file_handle:
         file_handle.write(data)
         file_handle.flush()
@@ -309,7 +477,6 @@ def _write_fsync_chmod(destination: Path, data: bytes, mode: int, artifact_group
 
 
 def _fsync_directory(directory: Path) -> None:
-    """Flush directory metadata for POSIX filesystems."""
     flags = getattr(os, "O_DIRECTORY", 0)
     file_descriptor = os.open(directory, os.O_RDONLY | flags)
     try:
@@ -319,7 +486,6 @@ def _fsync_directory(directory: Path) -> None:
 
 
 def _configure_consumer_directories(directory: Path, artifact_group_id: int | None) -> None:
-    """Give a configured consumer group traversal access to a deployment directory."""
     if artifact_group_id is None:
         return
     directory_status = directory.stat()

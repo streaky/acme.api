@@ -23,7 +23,12 @@ from acme_api.auth.rbac import require_operator, require_readonly
 from acme_api.db import get_db_session
 from acme_api.deployer import DeploymentError
 from acme_api.models.certificate import Certificate, CertificateStatus
-from acme_api.schemas.certificate import CertificateCreate, CertificateRead, CertificateRelease
+from acme_api.schemas.certificate import (
+    CertificateCreate,
+    CertificateGenerationSelect,
+    CertificateRead,
+    CertificateRelease,
+)
 from acme_api.services.certificate_contracts import (
     CertificateBackendUnavailableError,
     CertificateConflictError,
@@ -192,6 +197,35 @@ async def release_held_dns_persist_certificate(
     if starts_issuance:
         background_tasks.add_task(service.issue_released_dns_persist_certificate, certificate.id)
     return certificate
+
+
+@router.post(
+    "/{certificate_id}/generations/select",
+    response_model=CertificateRead,
+    summary="Select a retained certificate deployment generation",
+    responses={
+        **_NOT_FOUND_RESPONSE,
+        409: {"description": "Generation selection conflicts or is unavailable."},
+    },
+)
+async def select_certificate_generation(
+    certificate_id: uuid.UUID,
+    payload: CertificateGenerationSelect,
+    request: Request,
+    idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=255),
+    _: object = Depends(require_operator),
+) -> Certificate:
+    """Select a retained generation through the durable compatibility pointer."""
+    try:
+        return await _certificate_service(request).select_deployment_generation(
+            certificate_id,
+            generation_id=payload.generation_id,
+            idempotency_key=idempotency_key,
+        )
+    except CertificateNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except CertificateLifecycleError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
 
 
 @router.delete(

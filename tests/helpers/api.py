@@ -111,13 +111,13 @@ class ArtifactBackend:
         )
 
 
-def make_api_app(tmp_path: Path) -> FastAPI:
+def make_api_app(tmp_path: Path, *, generation_aware: bool = False) -> FastAPI:
     """Create an application seeded with API clients and artifact backend."""
     env_file = tmp_path / "cloudflare.env"
     env_file.write_text("CF_Token=test\n", encoding="utf-8")
     settings = AppSettings(
         database=DatabaseConfig(url=f"sqlite+aiosqlite:///{tmp_path}/test.db"),
-        deployment=DeploymentConfig(directory=tmp_path / "certs"),
+        deployment=DeploymentConfig(directory=tmp_path / "certs", generation_aware=generation_aware),
         acme=AcmeConfig(home_dir=tmp_path / "acmesh"),
         dns_providers=[
             DnsProviderConfig(name="cloudflare-main", provider_name="cloudflare", env_vars_file_path=env_file)

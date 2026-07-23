@@ -19,10 +19,17 @@ from acme_api.backend.acmesh_errors import AcmeShError, TransientAcmeShError
 from acme_api.backend.dataclasses import IssuanceResult
 from acme_api.backend.protocol import AcmeBackend
 from acme_api.config import RenewalConfig
-from acme_api.deployer import DeploymentError, DeploymentOptions, deploy_issuance_result
+from acme_api.deployer import (
+    DeploymentError,
+    DeploymentOptions,
+    DeploymentPaths,
+    GenerationOptions,
+    deploy_issuance_result,
+)
 from acme_api.models.certificate import Certificate, CertificateStatus
 from acme_api.models.event import Event
 from acme_api.models.renewal_attempt import RenewalAttempt
+from acme_api.services.deployment_generations import generation_details
 from acme_api.webhooks import WebhookDispatcher
 
 WebhookDispatcherFactory = Callable[[AsyncSession], WebhookDispatcher]
@@ -49,6 +56,7 @@ class RenewalDeploymentConfig:
     permissions_key: int = 0o600
     artifact_group_id: int | None = None
     allowed_source_roots: list[Path] | None = None
+    generation: GenerationOptions = dc.field(default_factory=GenerationOptions)
 
 
 class RenewalScheduler:
@@ -159,7 +167,7 @@ class RenewalScheduler:
                 return
 
             try:
-                deployment_path = self._deploy_result(result, certificate.acme_account_ref)
+                deployed = self._deploy_result(result, certificate.acme_account_ref)
             except DeploymentError as exc:
                 await self._record_failure(
                     session=session,
@@ -170,6 +178,9 @@ class RenewalScheduler:
                 return
 
             certificate.expiry_date = result.cert.expires_at
+            if deployed is not None:
+                certificate.current_generation_id = deployed.generation_id
+                certificate.current_generation_details = generation_details(deployed)
             certificate.status = CertificateStatus.VALID
             session.add(
                 RenewalAttempt(
@@ -184,7 +195,7 @@ class RenewalScheduler:
                     details={
                         "domains": certificate.domains,
                         "expires_at": result.cert.expires_at.isoformat(),
-                        "deployment_path": str(deployment_path) if deployment_path is not None else None,
+                        "deployment_path": str(deployed.directory) if deployed is not None else None,
                     },
                 )
             )
@@ -225,7 +236,7 @@ class RenewalScheduler:
         self,
         result: IssuanceResult,
         issuer: str | None,
-    ) -> Path | None:
+    ) -> DeploymentPaths | None:
         """Deploy renewed artifacts when deployment is enabled for the scheduler."""
         if self._deployment is None:
             return None
@@ -238,9 +249,10 @@ class RenewalScheduler:
                 artifact_group_id=self._deployment.artifact_group_id,
                 issuer=issuer,
                 allowed_source_roots=self._deployment.allowed_source_roots,
+                generation=self._deployment.generation,
             ),
         )
-        return deployed.directory
+        return deployed
 
     async def _record_failure(
         self,

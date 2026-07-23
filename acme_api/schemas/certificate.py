@@ -97,7 +97,15 @@ class CertificateRead(BaseModel):
     status: CertificateStatus
     revision: int = 1
     created_at: datetime
+    current_generation_id: str | None = None
+    current_generation_details: dict[str, object] | None = None
     updated_at: datetime
+
+
+class CertificateGenerationSelect(BaseModel):
+    """Selection request for a retained deployed generation."""
+
+    generation_id: str = Field(min_length=1, max_length=64)
 
 
 class CertificateList(BaseModel):

@@ -65,7 +65,7 @@ def _get_url() -> str:
     if url != "driver://user:pass@localhost/dbname":
         return _normalise_url(url)
 
-    from acme_api.config import AppSettings, load_config  # noqa: PLC0415
+    from acme_api.config import AppSettings, load_config
 
     settings: AppSettings = load_config()
     return _normalise_url(settings.database.url)
@@ -94,7 +94,7 @@ def run_migrations_offline() -> None:
         context.run_migrations()
 
 
-def run_migrations_online() -> None:  # noqa: PLR0915
+def run_migrations_online() -> None:
     """Run migrations in 'online' mode using a synchronous engine."""
     url = _get_url()
 
