@@ -11,6 +11,7 @@ from unittest.mock import patch
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from acme_api.config import (
     AcmeConfig,
@@ -22,6 +23,7 @@ from acme_api.db import get_session_factory, init_db, init_engine
 from acme_api.main import _initialize_admin_from_stdin, create_app
 from acme_api.models.api_key import APIKey, APIKeyRole
 from acme_api.models.event import Event
+from acme_api.scheduler import RenewalScheduler
 from acme_api.services.certificates import CertificateLifecycleService
 
 
@@ -141,6 +143,48 @@ class TestLifespan:
                 async with lifespan(app):
                     await asyncio.wait_for(recovery_started.wait(), timeout=0.5)
                     release_recovery.set()
+
+    @pytest.mark.anyio
+    async def test_lifespan_shutdown_continues_after_recovery_failure(self, settings: AppSettings) -> None:
+        """A logged recovery failure does not prevent scheduler and engine cleanup."""
+        app = create_app(settings=settings)
+        recovery_started = asyncio.Event()
+        scheduler_shutdown = False
+        engine_disposed = False
+        original_scheduler_shutdown = RenewalScheduler.shutdown
+        original_engine_dispose = AsyncEngine.dispose
+
+        async def failing_recovery(_: CertificateLifecycleService) -> None:
+            recovery_started.set()
+            raise RuntimeError("recovery failed")
+
+        async def tracking_scheduler_shutdown(scheduler: RenewalScheduler) -> None:
+            nonlocal scheduler_shutdown
+            scheduler_shutdown = True
+            await original_scheduler_shutdown(scheduler)
+
+        async def tracking_engine_dispose(engine: AsyncEngine, close: bool = True) -> None:
+            nonlocal engine_disposed
+            engine_disposed = True
+            await original_engine_dispose(engine, close)
+
+        from acme_api.main import lifespan
+
+        with (
+            patch.object(
+                CertificateLifecycleService,
+                "resume_released_dns_persist_certificates",
+                new=failing_recovery,
+            ),
+            patch.object(RenewalScheduler, "shutdown", new=tracking_scheduler_shutdown),
+            patch.object(AsyncEngine, "dispose", new=tracking_engine_dispose),
+        ):
+            async with lifespan(app):
+                await asyncio.wait_for(recovery_started.wait(), timeout=0.5)
+                await asyncio.sleep(0)
+
+        assert scheduler_shutdown is True
+        assert engine_disposed is True
 
 
 class TestMain:

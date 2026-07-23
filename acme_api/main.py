@@ -121,7 +121,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         yield
     finally:
         recovery_task.cancel()
-        with suppress(asyncio.CancelledError):
+        # The callback retrieves and logs a completed task's failure.
+        with suppress(asyncio.CancelledError, Exception):
             await recovery_task
         await renewal_scheduler.shutdown()
         await engine.dispose()
