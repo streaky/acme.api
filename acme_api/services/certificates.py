@@ -3,9 +3,6 @@
 from __future__ import annotations
 
 import uuid
-from collections.abc import Callable
-from pathlib import Path
-from typing import Protocol
 
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
@@ -19,40 +16,15 @@ from acme_api.deployer import DeploymentError, DeploymentOptions, deploy_issuanc
 from acme_api.models.certificate import Certificate, CertificateStatus
 from acme_api.models.event import Event
 from acme_api.schemas.certificate import CertificateCreate
-from acme_api.webhooks import WebhookDispatcher
-
-
-class CertificateLifecycleError(Exception):
-    """Base exception for lifecycle service errors."""
-
-
-class CertificateConflictError(CertificateLifecycleError):
-    """Raised when a certificate cannot be created due to a uniqueness conflict."""
-
-
-class CertificateBackendUnavailableError(CertificateLifecycleError):
-    """Raised when a transient ACME backend failure prevents request creation."""
-
-
-class CertificateNotFoundError(CertificateLifecycleError):
-    """Raised when a certificate row does not exist."""
-
-
-class CertificateNotRenewableError(CertificateLifecycleError):
-    """Raised when a certificate is not eligible for renewal."""
-
-
-class RenewalSchedulerProtocol(Protocol):
-    """Scheduler operations used by the certificate lifecycle service."""
-
-    def schedule_certificate(self, certificate: Certificate) -> object | None:
-        """Schedule future renewal for a certificate."""
-
-    def remove_certificate(self, certificate_id: uuid.UUID) -> None:
-        """Remove queued renewal jobs for a certificate."""
-
-
-WebhookDispatcherFactory = Callable[[AsyncSession], WebhookDispatcher]
+from acme_api.services.certificate_contracts import (
+    CertificateBackendUnavailableError,
+    CertificateConflictError,
+    CertificateLifecycleError,
+    CertificateNotFoundError,
+    CertificateNotRenewableError,
+    RenewalSchedulerProtocol,
+    WebhookDispatcherFactory,
+)
 
 
 class CertificateLifecycleService:
@@ -78,6 +50,8 @@ class CertificateLifecycleService:
         account = self._acme_account(payload.acme_account_ref)
         if payload.challenge_method == "dns-01" and payload.dns_provider_ref is None:
             raise CertificateLifecycleError("dns_provider_ref is required for dns-01 certificates.")
+        if payload.held and payload.challenge_method != "dns-persist":
+            raise CertificateLifecycleError("Only DNS Persist requests can be held.")
 
         async with self._session_factory() as session:
             existing = await self._find_request(session, payload)
@@ -108,7 +82,7 @@ class CertificateLifecycleService:
                     dns_record_name=f"_validation-persist.{dns_persist_domain}",
                     dns_record_value=dns_value,
                     key_algorithm=payload.key_algorithm,
-                    status=CertificateStatus.PENDING_DNS,
+                    status=CertificateStatus.HELD if payload.held else CertificateStatus.PENDING_DNS,
                 )
             else:
                 certificate = Certificate(
@@ -161,7 +135,7 @@ class CertificateLifecycleService:
         """Resume an identical DNS Persist request or reject an identity collision."""
         if (
             existing.challenge_method == "dns-persist"
-            and existing.status != CertificateStatus.REVOKED
+            and existing.status not in (CertificateStatus.REVOKED, CertificateStatus.CANCELLED)
             and existing.domains == payload.domains
         ):
             return existing
@@ -180,13 +154,37 @@ class CertificateLifecycleService:
             await self._issue_and_deploy(session, certificate, method="dns-01")
 
     async def authorize_dns_persist_certificate(self, certificate_id: uuid.UUID) -> tuple[Certificate, bool]:
-        """Transition a DNS Persist request to issuing, returning whether work should start."""
+        """Record that a held request's DNS authorization is ready without issuing it."""
         async with self._session_factory() as session:
             certificate = await session.get(Certificate, certificate_id)
             if certificate is None:
                 raise CertificateNotFoundError("Certificate not found.")
             if certificate.challenge_method != "dns-persist":
                 raise CertificateLifecycleError("Certificate does not use DNS Persist.")
+            if certificate.status == CertificateStatus.HELD:
+                result = await session.execute(
+                    update(Certificate)
+                    .where(
+                        Certificate.id == certificate_id,
+                        Certificate.status == CertificateStatus.HELD,
+                        Certificate.revision == certificate.revision,
+                    )
+                    .values(
+                        status=CertificateStatus.AUTHORIZATION_READY,
+                        revision=Certificate.revision + 1,
+                    )
+                    .returning(Certificate.id)
+                )
+                if result.scalar_one_or_none() is None:
+                    await session.rollback()
+                    certificate = await session.get(Certificate, certificate_id)
+                    if certificate is None:
+                        raise CertificateNotFoundError("Certificate not found.")
+                    return certificate, False
+                await session.refresh(certificate)
+                await self._record_event(session, certificate, "certificate.authorization_ready", {})
+                await session.commit()
+                return certificate, False
             if certificate.status not in (CertificateStatus.PENDING_DNS, CertificateStatus.FAILED):
                 return certificate, False
             result = await session.execute(
@@ -209,6 +207,67 @@ class CertificateLifecycleService:
             await session.commit()
             return certificate, True
 
+    async def release_held_dns_persist_certificate(
+        self,
+        certificate_id: uuid.UUID,
+        *,
+        revision: int,
+        idempotency_key: str,
+    ) -> tuple[Certificate, bool]:
+        """Release the current held revision exactly once for asynchronous issuance."""
+        async with self._session_factory() as session:
+            certificate = await session.get(Certificate, certificate_id)
+            if certificate is None:
+                raise CertificateNotFoundError("Certificate not found.")
+            if certificate.challenge_method != "dns-persist":
+                raise CertificateLifecycleError("Certificate does not use DNS Persist.")
+            if certificate.release_idempotency_key == idempotency_key:
+                return certificate, certificate.status == CertificateStatus.RELEASED
+            result = await session.execute(
+                update(Certificate)
+                .where(
+                    Certificate.id == certificate_id,
+                    Certificate.revision == revision,
+                    Certificate.release_idempotency_key.is_(None),
+                    Certificate.status.in_((CertificateStatus.HELD, CertificateStatus.AUTHORIZATION_READY)),
+                )
+                .values(
+                    status=CertificateStatus.RELEASED,
+                    revision=Certificate.revision + 1,
+                    release_idempotency_key=idempotency_key,
+                )
+                .returning(Certificate.id)
+            )
+            if result.scalar_one_or_none() is None:
+                await session.rollback()
+                certificate = await session.get(Certificate, certificate_id)
+                if certificate is None:
+                    raise CertificateNotFoundError("Certificate not found.")
+                if certificate.release_idempotency_key == idempotency_key:
+                    return certificate, certificate.status == CertificateStatus.RELEASED
+                raise CertificateLifecycleError("Certificate revision is stale or cannot be released.")
+            await session.refresh(certificate)
+            await self._record_event(session, certificate, "certificate.released", {"revision": revision})
+            await session.commit()
+            return certificate, True
+
+    async def issue_released_dns_persist_certificate(self, certificate_id: uuid.UUID) -> None:
+        """Claim a released held request and issue it once."""
+        async with self._session_factory() as session:
+            result = await session.execute(
+                update(Certificate)
+                .where(Certificate.id == certificate_id, Certificate.status == CertificateStatus.RELEASED)
+                .values(status=CertificateStatus.ISSUING)
+                .returning(Certificate.id)
+            )
+            if result.scalar_one_or_none() is None:
+                return
+            certificate = await session.get(Certificate, certificate_id)
+            if certificate is None:
+                return
+            await session.commit()
+            await self._issue_and_deploy(session, certificate, method="dns-persist")
+
     async def issue_dns_persist_certificate(self, certificate_id: uuid.UUID) -> None:
         """Issue an explicitly authorized DNS Persist request."""
         async with self._session_factory() as session:
@@ -216,6 +275,23 @@ class CertificateLifecycleService:
             if certificate is None or certificate.status != CertificateStatus.ISSUING:
                 return
             await self._issue_and_deploy(session, certificate, method="dns-persist")
+
+    async def resume_released_dns_persist_certificates(self) -> None:
+        """Resume released requests, including issuance interrupted by a process stop."""
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(Certificate.id, Certificate.status).where(
+                    Certificate.challenge_method == "dns-persist",
+                    Certificate.release_idempotency_key.is_not(None),
+                    Certificate.status.in_((CertificateStatus.RELEASED, CertificateStatus.ISSUING)),
+                )
+            )
+            certificates = list(result.all())
+        for certificate_id, certificate_status in certificates:
+            if certificate_status == CertificateStatus.RELEASED:
+                await self.issue_released_dns_persist_certificate(certificate_id)
+            else:
+                await self.issue_dns_persist_certificate(certificate_id)
 
     async def _issue_and_deploy(
         self,
@@ -259,8 +335,16 @@ class CertificateLifecycleService:
         except (AcmeShError, DeploymentError) as exc:
             await self._mark_failed(session, certificate, exc)
             return
-        certificate.expiry_date = result.cert.expires_at
-        certificate.status = CertificateStatus.VALID
+        transition = await session.execute(
+            update(Certificate)
+            .where(Certificate.id == certificate.id, Certificate.status == CertificateStatus.ISSUING)
+            .values(expiry_date=result.cert.expires_at, status=CertificateStatus.VALID)
+            .returning(Certificate.id)
+        )
+        if transition.scalar_one_or_none() is None:
+            await session.rollback()
+            return
+        await session.refresh(certificate)
         await self._record_event(
             session,
             certificate,
@@ -278,21 +362,27 @@ class CertificateLifecycleService:
             self._scheduler.schedule_certificate(certificate)
 
     async def revoke_certificate(self, certificate_id: uuid.UUID) -> None:
-        """Soft-delete a certificate by marking it revoked and unscheduling renewal."""
+        """Soft-delete a certificate, cancelling held requests before issuance."""
         async with self._session_factory() as session:
             certificate = await session.get(Certificate, certificate_id)
             if certificate is None:
                 raise CertificateNotFoundError("Certificate not found.")
+            if certificate.status == CertificateStatus.CANCELLED:
+                return
 
-            certificate.status = CertificateStatus.REVOKED
-            await self._record_event(
-                session,
-                certificate,
-                "certificate.revoked",
-                {"name": certificate.name},
+            held_lifecycle_statuses = (
+                CertificateStatus.HELD,
+                CertificateStatus.AUTHORIZATION_READY,
+                CertificateStatus.RELEASED,
             )
+            is_held_lifecycle_request = certificate.status in held_lifecycle_statuses or (
+                certificate.status == CertificateStatus.ISSUING and certificate.release_idempotency_key is not None
+            )
+            certificate.status = CertificateStatus.CANCELLED if is_held_lifecycle_request else CertificateStatus.REVOKED
+            event_type = "certificate.cancelled" if is_held_lifecycle_request else "certificate.revoked"
+            await self._record_event(session, certificate, event_type, {"name": certificate.name})
             await session.commit()
-            await self._dispatch_webhook(session, "certificate.revoked", certificate)
+            await self._dispatch_webhook(session, event_type, certificate)
 
         if self._scheduler is not None:
             self._scheduler.remove_certificate(certificate_id)
@@ -322,7 +412,16 @@ class CertificateLifecycleService:
         certificate: Certificate,
         error: Exception,
     ) -> None:
-        certificate.status = CertificateStatus.FAILED
+        transition = await session.execute(
+            update(Certificate)
+            .where(Certificate.id == certificate.id, Certificate.status == CertificateStatus.ISSUING)
+            .values(status=CertificateStatus.FAILED)
+            .returning(Certificate.id)
+        )
+        if transition.scalar_one_or_none() is None:
+            await session.rollback()
+            return
+        await session.refresh(certificate)
         await self._record_event(
             session,
             certificate,
@@ -375,20 +474,6 @@ class CertificateLifecycleService:
         raise DeploymentError(f"ACME account not configured: {name}")
 
 
-async def expiring_event_exists(
-    session: AsyncSession,
-    certificate_id: uuid.UUID,
-) -> bool:
-    """Return true when an expiring event was already recorded for a certificate."""
-    result = await session.execute(
-        select(Event).where(
-            Event.certificate_id == certificate_id,
-            Event.event_type == "certificate.expiring",
-        )
-    )
-    return result.scalar_one_or_none() is not None
-
-
 def _dns_persist_scope(domains: list[str]) -> tuple[str, bool]:
     """Return the primary DNS Persist scope and whether it needs wildcard policy."""
     scope = domains[0].removeprefix("*.")
@@ -403,14 +488,10 @@ def _dns_persist_scope(domains: list[str]) -> tuple[str, bool]:
 
 
 def _account_key_path(account: AcmeAccountConfig) -> str | None:
-    if account.account_key_path is None:
-        return None
-    return str(Path(account.account_key_path))
+    return str(account.account_key_path) if account.account_key_path is not None else None
 
 
 def _error_category(error: Exception) -> str:
     if isinstance(error, TransientAcmeShError):
         return "transient"
-    if isinstance(error, AcmeShError):
-        return "terminal"
-    return "deployment"
+    return "terminal" if isinstance(error, AcmeShError) else "deployment"

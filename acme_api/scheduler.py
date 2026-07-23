@@ -23,10 +23,21 @@ from acme_api.deployer import DeploymentError, DeploymentOptions, deploy_issuanc
 from acme_api.models.certificate import Certificate, CertificateStatus
 from acme_api.models.event import Event
 from acme_api.models.renewal_attempt import RenewalAttempt
-from acme_api.services.certificates import expiring_event_exists
 from acme_api.webhooks import WebhookDispatcher
 
 WebhookDispatcherFactory = Callable[[AsyncSession], WebhookDispatcher]
+
+
+async def _expiring_event_exists(session: AsyncSession, certificate_id: uuid.UUID) -> bool:
+    """Return whether an expiring event was already recorded for a certificate."""
+    return (
+        await session.scalar(
+            select(Event.id)
+            .where(Event.certificate_id == certificate_id, Event.event_type == "certificate.expiring")
+            .limit(1)
+        )
+        is not None
+    )
 
 
 @dc.dataclass(frozen=True)
@@ -194,7 +205,7 @@ class RenewalScheduler:
         now = dt.datetime.now(dt.UTC)
         if expiry - dt.timedelta(days=self._config.window_days) > now:
             return
-        if await expiring_event_exists(session, certificate.id):
+        if await _expiring_event_exists(session, certificate.id):
             return
 
         session.add(

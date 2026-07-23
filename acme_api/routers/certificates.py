@@ -9,6 +9,7 @@ from fastapi import (
     APIRouter,
     BackgroundTasks,
     Depends,
+    Header,
     HTTPException,
     Query,
     Request,
@@ -22,15 +23,15 @@ from acme_api.auth.rbac import require_operator, require_readonly
 from acme_api.db import get_db_session
 from acme_api.deployer import DeploymentError
 from acme_api.models.certificate import Certificate, CertificateStatus
-from acme_api.schemas.certificate import CertificateCreate, CertificateRead
-from acme_api.services.certificates import (
+from acme_api.schemas.certificate import CertificateCreate, CertificateRead, CertificateRelease
+from acme_api.services.certificate_contracts import (
     CertificateBackendUnavailableError,
     CertificateConflictError,
     CertificateLifecycleError,
-    CertificateLifecycleService,
     CertificateNotFoundError,
     CertificateNotRenewableError,
 )
+from acme_api.services.certificates import CertificateLifecycleService
 
 router = APIRouter(prefix="/v1/certificates", tags=["Certificates"])
 
@@ -155,6 +156,41 @@ async def authorize_dns_persist_certificate(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     if starts_issuance:
         background_tasks.add_task(service.issue_dns_persist_certificate, certificate.id)
+    return certificate
+
+
+@router.post(
+    "/{certificate_id}/release",
+    response_model=CertificateRead,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Release a held DNS Persist certificate request",
+    responses={
+        **_NOT_FOUND_RESPONSE,
+        409: {"description": "Certificate revision is stale or cannot be released."},
+    },
+)
+async def release_held_dns_persist_certificate(
+    certificate_id: uuid.UUID,
+    payload: CertificateRelease,
+    background_tasks: BackgroundTasks,
+    request: Request,
+    idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=255),
+    _: object = Depends(require_operator),
+) -> Certificate:
+    """Release one current held revision, safely retrying the same keyed request."""
+    service = _certificate_service(request)
+    try:
+        certificate, starts_issuance = await service.release_held_dns_persist_certificate(
+            certificate_id,
+            revision=payload.revision,
+            idempotency_key=idempotency_key,
+        )
+    except CertificateNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except CertificateLifecycleError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    if starts_issuance:
+        background_tasks.add_task(service.issue_released_dns_persist_certificate, certificate.id)
     return certificate
 
 

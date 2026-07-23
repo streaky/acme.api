@@ -124,6 +124,7 @@ async def _create_certificate(
     session_factory: async_sessionmaker[AsyncSession],
     *,
     expiry: dt.datetime | None = None,
+    status: CertificateStatus = CertificateStatus.VALID,
 ) -> Certificate:
     async with session_factory() as session:
         certificate = Certificate(
@@ -132,7 +133,7 @@ async def _create_certificate(
             acme_account_ref="le",
             dns_provider_ref="cf",
             expiry_date=expiry or dt.datetime.now(dt.UTC),
-            status=CertificateStatus.VALID,
+            status=status,
         )
         session.add(certificate)
         await session.commit()
@@ -178,6 +179,24 @@ async def test_rebuild_jobs_schedules_valid_certificates(
 
     assert count == 1
     assert scheduler.get_job(f"renew:{certificate.id}") is not None
+
+
+@pytest.mark.anyio
+async def test_rebuild_jobs_excludes_held_requests(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Held requests never enter the renewal scheduler, even with an expiry date."""
+    certificate = await _create_certificate(session_factory, status=CertificateStatus.HELD)
+    scheduler = AsyncIOScheduler(timezone=dt.UTC)
+    renewal_scheduler = RenewalScheduler(
+        session_factory=session_factory,
+        backend=RecordingBackend(),
+        config=RenewalConfig(),
+        scheduler=scheduler,
+    )
+
+    assert await renewal_scheduler.rebuild_jobs() == 0
+    assert scheduler.get_job(f"renew:{certificate.id}") is None
 
 
 @pytest.mark.anyio

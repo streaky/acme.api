@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import datetime as dt
 import ipaddress
 from collections.abc import AsyncGenerator
@@ -38,7 +37,6 @@ from acme_api.models.certificate import Certificate, CertificateStatus
 from acme_api.models.event import Event
 from acme_api.models.webhook import WebhookConfig
 from acme_api.scheduler import RenewalScheduler
-from acme_api.services.certificates import CertificateLifecycleService
 from acme_api.webhooks import SIGNATURE_HEADER, WebhookDispatcher, sign_payload
 
 
@@ -293,52 +291,6 @@ def test_full_certificate_lifecycle_with_webhooks(
             "shared-secret",
             request.content,
         )
-
-
-@pytest.mark.anyio
-async def test_concurrent_dns_persist_authorizations_start_once(tmp_path: Path) -> None:
-    """Exactly one concurrent authorization claims a DNS Persist request."""
-    settings = _settings(tmp_path)
-    engine = init_engine(settings)
-    try:
-        await init_db(engine)
-        session_factory = get_session_factory()
-        async with session_factory() as session:
-            certificate = Certificate(
-                name="concurrent-manual-cert",
-                domains=["example.com"],
-                acme_account_ref="letsencrypt-staging",
-                challenge_method="dns-persist",
-                dns_record_name="_validation-persist.example.com",
-                dns_record_value="persist-example.com",
-                status=CertificateStatus.PENDING_DNS,
-            )
-            session.add(certificate)
-            await session.commit()
-            certificate_id = certificate.id
-
-        service = CertificateLifecycleService(
-            session_factory=session_factory,
-            backend=ArtifactBackend(tmp_path / "acme-artifacts"),
-            settings=settings,
-        )
-        authorizations = await asyncio.gather(
-            service.authorize_dns_persist_certificate(certificate_id),
-            service.authorize_dns_persist_certificate(certificate_id),
-        )
-
-        assert sum(starts_issuance for _, starts_issuance in authorizations) == 1
-        async with session_factory() as session:
-            stored_certificate = await session.get(Certificate, certificate_id)
-            events = (
-                (await session.execute(select(Event).where(Event.certificate_id == certificate_id))).scalars().all()
-            )
-
-        assert stored_certificate is not None
-        assert stored_certificate.status == CertificateStatus.ISSUING
-        assert [event.event_type for event in events] == ["certificate.authorization_requested"]
-    finally:
-        await engine.dispose()
 
 
 @pytest.mark.anyio

@@ -134,6 +134,25 @@ cannot replace an existing request's account. Once valid, DNS Persist certificat
 unattended through the normal scheduler without DNS provider credentials or another TXT update.
 The instruction is returned only from authenticated certificate endpoints.
 
+#### Held DNS Persist workflow
+
+Set `"held": true` when creating a DNS Persist request to persist its stable TXT
+instruction without allowing issuance. After publishing the record, call
+`POST /v1/certificates/{id}/authorize`; this advances the request to
+`authorization_ready` but still does not issue. To release the current prepared
+revision, call `POST /v1/certificates/{id}/release` with an `Idempotency-Key`
+header and a JSON body containing the response's current `revision`, for example:
+
+```json
+{"revision": 1}
+```
+
+Release is accepted only once for that revision and queues asynchronous issuance.
+Retry the same request with the same idempotency key if the client does not receive
+the response; a retry also re-queues issuance if the stored request is still
+`released`. Delete a held, authorization-ready, released, or release-derived
+issuing request to cancel it.
+
 ## REST API
 
 OpenAPI is generated at `/openapi.json`; Swagger UI is available at `/docs`.
@@ -146,6 +165,7 @@ OpenAPI is generated at `/openapi.json`; Swagger UI is available at `/docs`.
 | `GET` | `/v1/certificates` | readonly | List certificates |
 | `GET` | `/v1/certificates/{id}` | readonly | Read certificate detail and DNS Persist instruction |
 | `POST` | `/v1/certificates/{id}/authorize` | operator | Authorize or retry DNS Persist issuance after publishing TXT |
+| `POST` | `/v1/certificates/{id}/release` | operator | Release a held DNS Persist revision; requires `Idempotency-Key` and `{ "revision": n }` |
 | `POST` | `/v1/certificates/{id}/renew` | operator | Queue manual renewal |
 | `DELETE` | `/v1/certificates/{id}` | operator | Soft-delete as revoked |
 | `GET` | `/v1/accounts` | readonly | List configured ACME accounts |
