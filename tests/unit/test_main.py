@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import io
 import sys
 from pathlib import Path
@@ -21,6 +22,7 @@ from acme_api.db import get_session_factory, init_db, init_engine
 from acme_api.main import _initialize_admin_from_stdin, create_app
 from acme_api.models.api_key import APIKey, APIKeyRole
 from acme_api.models.event import Event
+from acme_api.services.certificates import CertificateLifecycleService
 
 
 @pytest.fixture()
@@ -116,6 +118,29 @@ class TestLifespan:
         steps.append("after")
 
         assert steps == ["inside", "after"]
+
+    @pytest.mark.anyio
+    async def test_lifespan_does_not_wait_for_released_request_recovery(self, settings: AppSettings) -> None:
+        """Startup yields while potentially slow released-request recovery runs."""
+        app = create_app(settings=settings)
+        recovery_started = asyncio.Event()
+        release_recovery = asyncio.Event()
+
+        async def blocking_recovery(_: CertificateLifecycleService) -> None:
+            recovery_started.set()
+            await release_recovery.wait()
+
+        from acme_api.main import lifespan
+
+        with patch.object(
+            CertificateLifecycleService,
+            "resume_released_dns_persist_certificates",
+            new=blocking_recovery,
+        ):
+            async with asyncio.timeout(1):
+                async with lifespan(app):
+                    await asyncio.wait_for(recovery_started.wait(), timeout=0.5)
+                    release_recovery.set()
 
 
 class TestMain:

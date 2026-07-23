@@ -13,7 +13,7 @@ import os
 import sys
 import time
 from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 from typing import Any
 
@@ -102,12 +102,27 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         scheduler=renewal_scheduler,
         webhook_dispatcher_factory=webhook_dispatcher_factory,
     )
-    await app.state.certificate_service.resume_released_dns_persist_certificates()
     await renewal_scheduler.start()
+
+    def log_recovery_failure(task: asyncio.Task[None]) -> None:
+        """Log an unexpected recovery failure after retrieving its exception."""
+        if task.cancelled():
+            return
+        if exception := task.exception():
+            root_logger.error("Unable to resume released DNS Persist requests: %s", exception)
+
+    recovery_task = asyncio.create_task(
+        app.state.certificate_service.resume_released_dns_persist_certificates(),
+        name="resume-released-dns-persist-requests",
+    )
+    recovery_task.add_done_callback(log_recovery_failure)
 
     try:
         yield
     finally:
+        recovery_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await recovery_task
         await renewal_scheduler.shutdown()
         await engine.dispose()
         root_logger.info("acme.api shutting down")

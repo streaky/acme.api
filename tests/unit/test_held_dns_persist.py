@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 import uuid
 from pathlib import Path
 from unittest.mock import patch
@@ -235,5 +236,10 @@ def test_restart_resumes_held_issuance_interrupted_after_claim(tmp_path: Path) -
     assert isinstance(backend, ArtifactBackend)
     with TestClient(restarted) as client:
         recovered = client.get(f"/v1/certificates/{certificate_id}", headers=headers)
+        for _ in range(19):
+            if recovered.json()["status"] == "valid":
+                break
+            time.sleep(0.05)
+            recovered = client.get(f"/v1/certificates/{certificate_id}", headers=headers)
         assert recovered.json()["status"] == "valid"
     assert backend.issue_calls == 1
