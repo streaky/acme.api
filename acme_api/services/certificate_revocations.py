@@ -27,6 +27,17 @@ if TYPE_CHECKING:
 _REVOCATION_LEASE = dt.timedelta(minutes=10)
 
 
+def _public_failure_detail(error: Exception) -> str:
+    """Return a diagnostic that cannot expose acme.sh command output or secrets."""
+    if isinstance(error, DeploymentError):
+        return "The configured ACME account is unavailable."
+    if isinstance(error, OSError):
+        return "acme.sh could not be executed."
+    if isinstance(error, TransientAcmeShError):
+        return "acme.sh reported a retryable revocation failure."
+    return "acme.sh reported a terminal revocation failure."
+
+
 async def request_certificate_revocation(
     service: CertificateLifecycleService,
     certificate_id: uuid.UUID,
@@ -89,7 +100,7 @@ async def request_certificate_revocation(
         except (AcmeShError, DeploymentError, OSError) as exc:
             revocation.status = CertificateRevocationStatus.FAILED
             revocation.error_category = "transient" if isinstance(exc, TransientAcmeShError) else "terminal"
-            revocation.error_details = str(exc)
+            revocation.error_details = _public_failure_detail(exc)
             revocation.completed_at = dt.datetime.now(dt.UTC)
             await service._record_event(
                 session,

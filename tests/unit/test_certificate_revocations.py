@@ -63,7 +63,7 @@ def test_certificate_authority_revocation_persists_terminal_failure(
     app = make_api_app(tmp_path)
     backend = app.state.acme_backend
     assert isinstance(backend, ArtifactBackend)
-    backend.revocation.error = TerminalAcmeShError("certificate cannot be revoked")
+    backend.revocation.error = TerminalAcmeShError("private-key-material-must-not-leak")
     with TestClient(app) as client:
         created = client.post(
             "/v1/certificates",
@@ -85,6 +85,7 @@ def test_certificate_authority_revocation_persists_terminal_failure(
     assert failed.json()["status"] == "failed"
     assert failed.json()["error_category"] == "terminal"
     assert repeated.json()["id"] == failed.json()["id"]
+    assert failed.json()["error_details"] == "acme.sh reported a terminal revocation failure."
     assert len(backend.revocation.requests) == 1
     dispatched.assert_awaited_once_with(ANY, "certificate.revocation_failed", ANY)
 
