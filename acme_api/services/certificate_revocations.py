@@ -13,6 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from acme_api.backend.acmesh_errors import AcmeShError, TransientAcmeShError
+from acme_api.deployer import DeploymentError
 from acme_api.models.certificate import Certificate
 from acme_api.models.certificate_revocation import CertificateRevocation, CertificateRevocationStatus
 from acme_api.services.certificate_contracts import CertificateLifecycleError, CertificateNotFoundError
@@ -74,8 +75,8 @@ async def request_certificate_revocation(
         if not await _claim_pending_revocation(session, revocation):
             return revocation
 
-        account = service._acme_account(certificate.acme_account_ref)
         try:
+            account = service._acme_account(certificate.acme_account_ref)
             await service._backend.revoke_certificate(
                 revocation.domain,
                 reason=revocation.reason,
@@ -83,7 +84,7 @@ async def request_certificate_revocation(
                 account_key_path=account_key_path(account),
                 server_url=account.server_url,
             )
-        except (AcmeShError, OSError) as exc:
+        except (AcmeShError, DeploymentError, OSError) as exc:
             revocation.status = CertificateRevocationStatus.FAILED
             revocation.error_category = "transient" if isinstance(exc, TransientAcmeShError) else "terminal"
             revocation.error_details = str(exc)
@@ -108,6 +109,7 @@ async def request_certificate_revocation(
         )
         await session.commit()
         await session.refresh(revocation)
+        await service._dispatch_webhook(session, "certificate.revoked_at_ca", certificate)
         return revocation
 
 

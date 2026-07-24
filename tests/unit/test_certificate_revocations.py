@@ -4,16 +4,22 @@ from __future__ import annotations
 
 from datetime import timedelta
 from pathlib import Path
+from typing import NoReturn
+from unittest.mock import ANY, AsyncMock
 
 import pytest
 from fastapi.testclient import TestClient
 
 from acme_api.backend.acmesh_errors import TerminalAcmeShError
+from acme_api.deployer import DeploymentError
 from acme_api.services import certificate_revocations
 from tests.helpers.api import ArtifactBackend, make_api_app
 
 
-def test_certificate_authority_revocation_is_idempotent(tmp_path: Path) -> None:
+def test_certificate_authority_revocation_is_idempotent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Revoke one issued domain through the backend without changing local deployment."""
     headers = {"Authorization": "Bearer operator-key-12345", "Idempotency-Key": "revoke-once"}
     app = make_api_app(tmp_path)
@@ -31,6 +37,8 @@ def test_certificate_authority_revocation_is_idempotent(tmp_path: Path) -> None:
             },
         )
         certificate_id = created.json()["id"]
+        dispatched = AsyncMock()
+        monkeypatch.setattr(app.state.certificate_service, "_dispatch_webhook", dispatched)
         revoked = client.post(f"/v1/certificates/{certificate_id}/revoke", headers=headers, json={"reason": 1})
         repeated = client.post(f"/v1/certificates/{certificate_id}/revoke", headers=headers, json={"reason": 1})
 
@@ -38,6 +46,7 @@ def test_certificate_authority_revocation_is_idempotent(tmp_path: Path) -> None:
     assert revoked.json()["status"] == "succeeded"
     assert repeated.json()["id"] == revoked.json()["id"]
     assert backend.revocation.requests == [("example.com", 1, None, "https://acme-v02.api.letsencrypt.org/directory")]
+    dispatched.assert_awaited_once_with(ANY, "certificate.revoked_at_ca", ANY)
 
 
 def test_certificate_authority_revocation_persists_terminal_failure(tmp_path: Path) -> None:
@@ -67,6 +76,44 @@ def test_certificate_authority_revocation_persists_terminal_failure(tmp_path: Pa
     assert failed.json()["error_category"] == "terminal"
     assert repeated.json()["id"] == failed.json()["id"]
     assert len(backend.revocation.requests) == 1
+
+
+def test_certificate_authority_revocation_persists_missing_account_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Persist a missing configured ACME account as a terminal revocation failure."""
+    headers = {"Authorization": "Bearer operator-key-12345", "Idempotency-Key": "missing-account"}
+    app = make_api_app(tmp_path)
+    backend = app.state.acme_backend
+    assert isinstance(backend, ArtifactBackend)
+    with TestClient(app) as client:
+        created = client.post(
+            "/v1/certificates",
+            headers=headers,
+            json={
+                "name": "missing-account-revoke-cert",
+                "domains": ["missing-account.example"],
+                "acme_account_ref": "letsencrypt-production",
+                "dns_provider_ref": "cloudflare-main",
+            },
+        )
+        certificate_id = created.json()["id"]
+
+        def missing_account(_name: str) -> NoReturn:
+            raise DeploymentError("ACME account not configured: letsencrypt-production")
+
+        monkeypatch.setattr(app.state.certificate_service, "_acme_account", missing_account)
+        failed = client.post(
+            f"/v1/certificates/{certificate_id}/revoke",
+            headers=headers,
+            json={"reason": 1},
+        )
+
+    assert failed.status_code == 200
+    assert failed.json()["status"] == "failed"
+    assert failed.json()["error_category"] == "terminal"
+    assert not backend.revocation.requests
 
 
 def test_certificate_authority_revocation_resumes_expired_pending_request(
