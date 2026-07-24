@@ -322,10 +322,12 @@ class CertificateLifecycleService:
                 if certificate.dns_provider_ref is None:
                     raise DeploymentError("DNS provider is required for dns-01 issuance.")
                 provider = self._dns_provider(certificate.dns_provider_ref)
-                challenge_params = {
-                    "dns_provider": provider.provider_name,
-                    "env_vars_file": str(provider.env_vars_file_path),
-                }
+                challenge_params.update(
+                    {
+                        "dns_provider": provider.provider_name,
+                        "env_vars_file": str(provider.env_vars_file_path),
+                    }
+                )
             result = await self._backend.issue_certificate(
                 domains=certificate.domains,
                 method=method,

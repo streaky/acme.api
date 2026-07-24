@@ -248,6 +248,7 @@ def test_full_certificate_lifecycle_with_webhooks(
                 "domains": ["example.com", "www.example.com"],
                 "acme_account_ref": "letsencrypt-staging",
                 "dns_provider_ref": "cloudflare-main",
+                "key_algorithm": "rsa-4096",
             },
         )
         assert created.status_code == 202
@@ -265,6 +266,7 @@ def test_full_certificate_lifecycle_with_webhooks(
             {
                 "dns_provider": "cloudflare",
                 "env_vars_file": str(Path("tests/fixtures/sample_dns.env").resolve()),
+                "key_algorithm": "rsa-4096",
             }
         ]
 
