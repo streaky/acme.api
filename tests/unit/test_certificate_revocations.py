@@ -39,13 +39,16 @@ def test_certificate_authority_revocation_is_idempotent(
         certificate_id = created.json()["id"]
         dispatched = AsyncMock()
         monkeypatch.setattr(app.state.certificate_service, "_dispatch_webhook", dispatched)
-        revoked = client.post(f"/v1/certificates/{certificate_id}/revoke", headers=headers, json={"reason": 1})
-        repeated = client.post(f"/v1/certificates/{certificate_id}/revoke", headers=headers, json={"reason": 1})
+        revoked = client.post(f"/v1/certificates/{certificate_id}/revoke", headers=headers)
+        repeated = client.post(f"/v1/certificates/{certificate_id}/revoke", headers=headers)
 
     assert revoked.status_code == 200
     assert revoked.json()["status"] == "succeeded"
+    assert revoked.json()["reason"] is None
     assert repeated.json()["id"] == revoked.json()["id"]
-    assert backend.revocation.requests == [("example.com", 1, None, "https://acme-v02.api.letsencrypt.org/directory")]
+    assert backend.revocation.requests == [
+        ("example.com", None, None, "https://acme-v02.api.letsencrypt.org/directory")
+    ]
     dispatched.assert_awaited_once_with(ANY, "certificate.revoked_at_ca", ANY)
 
 

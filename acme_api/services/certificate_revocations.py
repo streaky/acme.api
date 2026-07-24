@@ -1,5 +1,7 @@
 """Domain-based acme.sh certificate revocation lifecycle operations."""
 
+# This orchestration helper intentionally uses lifecycle internals to share its
+# configured session, backend, event recording, and webhook dispatch boundary.
 # pylint: disable=protected-access
 from __future__ import annotations
 

@@ -244,8 +244,8 @@ async def select_certificate_generation(
 )
 async def revoke_certificate_at_ca(
     certificate_id: uuid.UUID,
-    payload: CertificateRevocationCreate,
     request: Request,
+    payload: CertificateRevocationCreate | None = None,
     idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=255),
     actor: AuthenticatedUser = Depends(require_operator),
 ) -> CertificateRevocation:
@@ -254,7 +254,7 @@ async def revoke_certificate_at_ca(
         return await request_certificate_revocation(
             _certificate_service(request),
             certificate_id,
-            reason=payload.reason,
+            reason=payload.reason if payload is not None else None,
             idempotency_key=idempotency_key,
             actor=actor.name,
         )
