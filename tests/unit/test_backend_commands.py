@@ -267,6 +267,17 @@ class TestRevokeCertificate:
         assert has_flag_pair(call_args, "--revoke-reason", "1")
         assert has_flag_pair(call_args, "--accountkey-file", "/acmesh/account.key")
         assert has_flag_pair(call_args, "--server", "https://ca.example/directory")
+        assert "--ecc" in call_args
+
+    @pytest.mark.anyio
+    async def test_revoke_rsa_certificate_without_ecc_flag(self, backend: AcmeShBackend) -> None:
+        """Select acme.sh's RSA certificate slot when the managed key is RSA."""
+        with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_run:
+            mock_run.return_value = successful_process()
+
+            await backend.revoke_certificate("example.com", key_algorithm="rsa-2048")
+
+        assert "--ecc" not in mock_run.call_args.args
 
 
 class TestParsing:

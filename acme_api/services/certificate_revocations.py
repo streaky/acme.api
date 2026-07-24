@@ -5,10 +5,12 @@ from __future__ import annotations
 
 import datetime as dt
 import uuid
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
-from sqlalchemy import select
+from sqlalchemy import or_, select, update
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from acme_api.backend.acmesh_errors import AcmeShError, TransientAcmeShError
 from acme_api.models.certificate import Certificate
@@ -19,6 +21,8 @@ from acme_api.services.certificate_utilities import account_key_path
 if TYPE_CHECKING:
     from acme_api.services.certificates import CertificateLifecycleService
 
+_REVOCATION_LEASE = dt.timedelta(minutes=10)
+
 
 async def request_certificate_revocation(
     service: CertificateLifecycleService,
@@ -28,7 +32,7 @@ async def request_certificate_revocation(
     idempotency_key: str,
     actor: str | None,
 ) -> CertificateRevocation:
-    """Run one durable idempotent acme.sh domain revocation request."""
+    """Run one durable, claimed, idempotent acme.sh revocation request."""
     async with service._session_factory() as session:
         certificate = await session.get(Certificate, certificate_id)
         if certificate is None:
@@ -48,6 +52,9 @@ async def request_certificate_revocation(
             await session.commit()
         except IntegrityError:
             await session.rollback()
+            certificate = await session.get(Certificate, certificate_id)
+            if certificate is None:
+                raise CertificateNotFoundError("Certificate not found.") from None
             existing = await session.scalar(
                 select(CertificateRevocation).where(
                     CertificateRevocation.certificate_id == certificate_id,
@@ -64,11 +71,15 @@ async def request_certificate_revocation(
                 return existing
             revocation = existing
 
+        if not await _claim_pending_revocation(session, revocation):
+            return revocation
+
         account = service._acme_account(certificate.acme_account_ref)
         try:
             await service._backend.revoke_certificate(
                 revocation.domain,
-                reason=reason,
+                reason=revocation.reason,
+                key_algorithm=certificate.key_algorithm,
                 account_key_path=account_key_path(account),
                 server_url=account.server_url,
             )
@@ -98,3 +109,27 @@ async def request_certificate_revocation(
         await session.commit()
         await session.refresh(revocation)
         return revocation
+
+
+async def _claim_pending_revocation(session: AsyncSession, revocation: CertificateRevocation) -> bool:
+    """Atomically lease a pending request, allowing recovery after a dead worker."""
+    now = dt.datetime.now(dt.UTC)
+    result = await session.execute(
+        update(CertificateRevocation)
+        .where(
+            CertificateRevocation.id == revocation.id,
+            CertificateRevocation.status == CertificateRevocationStatus.PENDING,
+            or_(
+                CertificateRevocation.attempt_started_at.is_(None),
+                CertificateRevocation.attempt_started_at < now - _REVOCATION_LEASE,
+            ),
+        )
+        .values(attempt_started_at=now)
+        .execution_options(synchronize_session=False)
+    )
+    await session.commit()
+    if cast(CursorResult[Any], result).rowcount != 1:
+        await session.refresh(revocation)
+        return False
+    await session.refresh(revocation)
+    return True

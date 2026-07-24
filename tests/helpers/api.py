@@ -123,10 +123,12 @@ class ArtifactBackend:
         domain: str,
         *,
         reason: int | None = None,
+        key_algorithm: str = "ecdsa",
         account_key_path: str | None = None,
         server_url: str | None = None,
     ) -> None:
         """Record a deterministic acme.sh revocation request."""
+        del key_algorithm
         self.revocation.requests.append((domain, reason, account_key_path, server_url))
         if self.revocation.error is not None:
             raise self.revocation.error

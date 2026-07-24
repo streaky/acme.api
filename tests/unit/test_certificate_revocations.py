@@ -1,0 +1,106 @@
+"""Certificate-authority revocation API contract tests."""
+
+from __future__ import annotations
+
+from datetime import timedelta
+from pathlib import Path
+
+import pytest
+from fastapi.testclient import TestClient
+
+from acme_api.backend.acmesh_errors import TerminalAcmeShError
+from acme_api.services import certificate_revocations
+from tests.helpers.api import ArtifactBackend, make_api_app
+
+
+def test_certificate_authority_revocation_is_idempotent(tmp_path: Path) -> None:
+    """Revoke one issued domain through the backend without changing local deployment."""
+    headers = {"Authorization": "Bearer operator-key-12345", "Idempotency-Key": "revoke-once"}
+    app = make_api_app(tmp_path)
+    backend = app.state.acme_backend
+    assert isinstance(backend, ArtifactBackend)
+    with TestClient(app) as client:
+        created = client.post(
+            "/v1/certificates",
+            headers=headers,
+            json={
+                "name": "revoke-authority-cert",
+                "domains": ["example.com"],
+                "acme_account_ref": "letsencrypt-production",
+                "dns_provider_ref": "cloudflare-main",
+            },
+        )
+        certificate_id = created.json()["id"]
+        revoked = client.post(f"/v1/certificates/{certificate_id}/revoke", headers=headers, json={"reason": 1})
+        repeated = client.post(f"/v1/certificates/{certificate_id}/revoke", headers=headers, json={"reason": 1})
+
+    assert revoked.status_code == 200
+    assert revoked.json()["status"] == "succeeded"
+    assert repeated.json()["id"] == revoked.json()["id"]
+    assert backend.revocation.requests == [("example.com", 1, None, "https://acme-v02.api.letsencrypt.org/directory")]
+
+
+def test_certificate_authority_revocation_persists_terminal_failure(tmp_path: Path) -> None:
+    """Keep a terminal acme.sh revocation result durable and idempotent."""
+    headers = {"Authorization": "Bearer operator-key-12345", "Idempotency-Key": "terminal-revoke"}
+    app = make_api_app(tmp_path)
+    backend = app.state.acme_backend
+    assert isinstance(backend, ArtifactBackend)
+    backend.revocation.error = TerminalAcmeShError("certificate cannot be revoked")
+    with TestClient(app) as client:
+        created = client.post(
+            "/v1/certificates",
+            headers=headers,
+            json={
+                "name": "terminal-revoke-cert",
+                "domains": ["example.net"],
+                "acme_account_ref": "letsencrypt-production",
+                "dns_provider_ref": "cloudflare-main",
+            },
+        )
+        certificate_id = created.json()["id"]
+        failed = client.post(f"/v1/certificates/{certificate_id}/revoke", headers=headers, json={"reason": 4})
+        repeated = client.post(f"/v1/certificates/{certificate_id}/revoke", headers=headers, json={"reason": 4})
+
+    assert failed.status_code == 200
+    assert failed.json()["status"] == "failed"
+    assert failed.json()["error_category"] == "terminal"
+    assert repeated.json()["id"] == failed.json()["id"]
+    assert len(backend.revocation.requests) == 1
+
+
+def test_certificate_authority_revocation_resumes_expired_pending_request(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Retry a request after a dead worker's revocation lease expires."""
+    headers = {"Authorization": "Bearer operator-key-12345", "Idempotency-Key": "resume-pending"}
+    app = make_api_app(tmp_path)
+    backend = app.state.acme_backend
+    assert isinstance(backend, ArtifactBackend)
+    backend.revocation.error = RuntimeError("worker stopped after request persistence")
+    with TestClient(app, raise_server_exceptions=False) as client:
+        created = client.post(
+            "/v1/certificates",
+            headers=headers,
+            json={
+                "name": "resume-pending-revoke-cert",
+                "domains": ["example.org"],
+                "acme_account_ref": "letsencrypt-production",
+                "dns_provider_ref": "cloudflare-main",
+            },
+        )
+        certificate_id = created.json()["id"]
+        interrupted = client.post(f"/v1/certificates/{certificate_id}/revoke", headers=headers, json={"reason": 5})
+        backend.revocation.error = None
+        in_progress = client.post(f"/v1/certificates/{certificate_id}/revoke", headers=headers, json={"reason": 5})
+        assert in_progress.status_code == 200
+        assert in_progress.json()["status"] == "pending"
+        assert len(backend.revocation.requests) == 1
+        monkeypatch.setattr(certificate_revocations, "_REVOCATION_LEASE", timedelta())
+        resumed = client.post(f"/v1/certificates/{certificate_id}/revoke", headers=headers, json={"reason": 5})
+
+    assert interrupted.status_code == 500
+    assert resumed.status_code == 200
+    assert resumed.json()["status"] == "succeeded"
+    assert len(backend.revocation.requests) == 2

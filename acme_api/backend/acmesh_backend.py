@@ -243,11 +243,14 @@ class AcmeShBackend(AcmeBackend):
         domain: str,
         *,
         reason: int | None = None,
+        key_algorithm: str = "ecdsa",
         account_key_path: str | None = None,
         server_url: str | None = None,
     ) -> None:
         """Revoke acme.sh's certificate for ``domain`` using the configured account."""
         args = ["--revoke", "--domain", domain]
+        if key_algorithm == "ecdsa":
+            args.append("--ecc")
         if reason is not None:
             args += ["--revoke-reason", str(reason)]
         if server_url is not None:

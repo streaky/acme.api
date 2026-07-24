@@ -53,6 +53,7 @@ class AcmeBackend(t.Protocol):
         domain: str,
         *,
         reason: int | None = None,
+        key_algorithm: str = "ecdsa",
         account_key_path: str | None = None,
         server_url: str | None = None,
     ) -> None: ...

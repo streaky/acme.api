@@ -48,6 +48,7 @@ class CertificateRevocation(Base):
     created_at: Mapped[_dt.datetime] = mapped_column(
         DateTime(timezone=True), server_default=text("CURRENT_TIMESTAMP"), nullable=False
     )
+    attempt_started_at: Mapped[_dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[_dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     certificate = relationship(
