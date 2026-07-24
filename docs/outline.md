@@ -287,6 +287,10 @@ certificate.failed
 certificate.expiring
 
 certificate.revoked
+
+certificate.revoked_at_ca
+
+certificate.revocation_failed
 ```
 
 Webhook payload example:

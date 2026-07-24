@@ -174,6 +174,23 @@ class TestIssueCertificateDns01:
         assert result.domains == ["example.com", "www.example.com"]
 
     @pytest.mark.anyio
+    async def test_issue_rsa_certificate_selects_rsa_slot(self, backend: AcmeShBackend) -> None:
+        """Pass the stored RSA key length to acme.sh instead of using its ECC default."""
+        with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_run:
+            mock_run.return_value = successful_process()
+
+            await backend.issue_certificate(
+                domains=["example.com"],
+                method="dns-01",
+                challenge_params={
+                    "dns_provider": "cloudflare",
+                    "env_vars_file": None,
+                    "key_algorithm": "rsa-4096",
+                },
+            )
+        assert has_flag_pair(mock_run.call_args.args, "--keylength", "4096")
+
+    @pytest.mark.anyio
     async def test_dns_credentials_are_passed_per_subprocess(
         self, backend: AcmeShBackend, tmp_path: pathlib.Path
     ) -> None:

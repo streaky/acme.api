@@ -317,6 +317,7 @@ class CertificateLifecycleService:
         try:
             account = self._acme_account(certificate.acme_account_ref)
             challenge_params: dict[str, object] = {}
+            challenge_params["key_algorithm"] = certificate.key_algorithm
             if method == "dns-01":
                 if certificate.dns_provider_ref is None:
                     raise DeploymentError("DNS provider is required for dns-01 issuance.")

@@ -186,6 +186,9 @@ class AcmeShBackend(AcmeBackend):
             *chain_args_for(domains),
         ]
 
+        key_algorithm = str(challenge_params.get("key_algorithm", "ecdsa"))
+        if key_algorithm != "ecdsa":
+            args += ["--keylength", key_algorithm.removeprefix("rsa-")]
         if server_url is not None:
             # Without an explicit server acme.sh falls back to its default CA,
             # silently ignoring the account's configured directory URL.

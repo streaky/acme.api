@@ -34,6 +34,7 @@ def test_certificate_authority_revocation_is_idempotent(
                 "domains": ["example.com"],
                 "acme_account_ref": "letsencrypt-production",
                 "dns_provider_ref": "cloudflare-main",
+                "key_algorithm": "rsa-2048",
             },
         )
         certificate_id = created.json()["id"]
@@ -49,10 +50,14 @@ def test_certificate_authority_revocation_is_idempotent(
     assert backend.revocation.requests == [
         ("example.com", None, None, "https://acme-v02.api.letsencrypt.org/directory")
     ]
+    assert backend.revocation.key_algorithms == ["rsa-2048"]
     dispatched.assert_awaited_once_with(ANY, "certificate.revoked_at_ca", ANY)
 
 
-def test_certificate_authority_revocation_persists_terminal_failure(tmp_path: Path) -> None:
+def test_certificate_authority_revocation_persists_terminal_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Keep a terminal acme.sh revocation result durable and idempotent."""
     headers = {"Authorization": "Bearer operator-key-12345", "Idempotency-Key": "terminal-revoke"}
     app = make_api_app(tmp_path)
@@ -71,6 +76,8 @@ def test_certificate_authority_revocation_persists_terminal_failure(tmp_path: Pa
             },
         )
         certificate_id = created.json()["id"]
+        dispatched = AsyncMock()
+        monkeypatch.setattr(app.state.certificate_service, "_dispatch_webhook", dispatched)
         failed = client.post(f"/v1/certificates/{certificate_id}/revoke", headers=headers, json={"reason": 4})
         repeated = client.post(f"/v1/certificates/{certificate_id}/revoke", headers=headers, json={"reason": 4})
 
@@ -79,6 +86,7 @@ def test_certificate_authority_revocation_persists_terminal_failure(tmp_path: Pa
     assert failed.json()["error_category"] == "terminal"
     assert repeated.json()["id"] == failed.json()["id"]
     assert len(backend.revocation.requests) == 1
+    dispatched.assert_awaited_once_with(ANY, "certificate.revocation_failed", ANY)
 
 
 def test_certificate_authority_revocation_persists_missing_account_failure(

@@ -99,6 +99,7 @@ async def request_certificate_revocation(
             )
             await session.commit()
             await session.refresh(revocation)
+            await service._dispatch_webhook(session, "certificate.revocation_failed", certificate)
             return revocation
 
         revocation.status = CertificateRevocationStatus.SUCCEEDED

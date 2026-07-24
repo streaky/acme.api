@@ -32,6 +32,7 @@ class RevocationState:
     """Mutable revocation controls and observations for ``ArtifactBackend``."""
 
     requests: list[tuple[str, int | None, str | None, str | None]] = field(default_factory=list)
+    key_algorithms: list[str] = field(default_factory=list)
     error: Exception | None = None
 
 
@@ -128,7 +129,7 @@ class ArtifactBackend:
         server_url: str | None = None,
     ) -> None:
         """Record a deterministic acme.sh revocation request."""
-        del key_algorithm
+        self.revocation.key_algorithms.append(key_algorithm)
         self.revocation.requests.append((domain, reason, account_key_path, server_url))
         if self.revocation.error is not None:
             raise self.revocation.error
