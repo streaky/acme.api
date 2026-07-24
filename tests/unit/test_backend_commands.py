@@ -242,6 +242,33 @@ class TestRenewCertificate:
         assert result.domains == ["example.com", "www.example.com"]
 
 
+class TestRevokeCertificate:
+    """Verify revocations use acme.sh's documented domain interface."""
+
+    @pytest.mark.anyio
+    async def test_revoke_certificate_with_reason_and_account(
+        self,
+        backend: AcmeShBackend,
+    ) -> None:
+        """Pass the selected account and optional standardized reason to acme.sh."""
+        with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_run:
+            mock_run.return_value = successful_process()
+
+            await backend.revoke_certificate(
+                "example.com",
+                reason=1,
+                account_key_path="/acmesh/account.key",
+                server_url="https://ca.example/directory",
+            )
+
+        call_args = mock_run.call_args.args
+        assert "--revoke" in call_args
+        assert has_flag_pair(call_args, "--domain", "example.com")
+        assert has_flag_pair(call_args, "--revoke-reason", "1")
+        assert has_flag_pair(call_args, "--accountkey-file", "/acmesh/account.key")
+        assert has_flag_pair(call_args, "--server", "https://ca.example/directory")
+
+
 class TestParsing:
     """Verify supported acme.sh output parsing variants."""
 

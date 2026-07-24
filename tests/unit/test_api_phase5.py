@@ -52,6 +52,78 @@ def test_certificate_lifecycle_endpoints(tmp_path: Path) -> None:
         assert revoked.json()["status"] == "revoked"
 
 
+def test_certificate_authority_revocation_is_idempotent(tmp_path: Path) -> None:
+    """Revoke one issued domain through the backend without changing local deployment."""
+    headers = {"Authorization": "Bearer operator-key-12345", "Idempotency-Key": "revoke-once"}
+    app = make_api_app(tmp_path)
+    backend = app.state.acme_backend
+    assert isinstance(backend, ArtifactBackend)
+    with TestClient(app) as client:
+        created = client.post(
+            "/v1/certificates",
+            headers=headers,
+            json={
+                "name": "revoke-authority-cert",
+                "domains": ["example.com"],
+                "acme_account_ref": "letsencrypt-production",
+                "dns_provider_ref": "cloudflare-main",
+            },
+        )
+        certificate_id = created.json()["id"]
+        revoked = client.post(
+            f"/v1/certificates/{certificate_id}/revoke",
+            headers=headers,
+            json={"reason": 1},
+        )
+        repeated = client.post(
+            f"/v1/certificates/{certificate_id}/revoke",
+            headers=headers,
+            json={"reason": 1},
+        )
+
+    assert revoked.status_code == 200
+    assert revoked.json()["status"] == "succeeded"
+    assert repeated.json()["id"] == revoked.json()["id"]
+    assert backend.revocation.requests == [("example.com", 1, None, "https://acme-v02.api.letsencrypt.org/directory")]
+
+
+def test_certificate_authority_revocation_persists_terminal_failure(tmp_path: Path) -> None:
+    """Keep a terminal acme.sh revocation result durable and idempotent."""
+    headers = {"Authorization": "Bearer operator-key-12345", "Idempotency-Key": "terminal-revoke"}
+    app = make_api_app(tmp_path)
+    backend = app.state.acme_backend
+    assert isinstance(backend, ArtifactBackend)
+    backend.revocation.error = TerminalAcmeShError("certificate cannot be revoked")
+    with TestClient(app) as client:
+        created = client.post(
+            "/v1/certificates",
+            headers=headers,
+            json={
+                "name": "terminal-revoke-cert",
+                "domains": ["example.net"],
+                "acme_account_ref": "letsencrypt-production",
+                "dns_provider_ref": "cloudflare-main",
+            },
+        )
+        certificate_id = created.json()["id"]
+        failed = client.post(
+            f"/v1/certificates/{certificate_id}/revoke",
+            headers=headers,
+            json={"reason": 4},
+        )
+        repeated = client.post(
+            f"/v1/certificates/{certificate_id}/revoke",
+            headers=headers,
+            json={"reason": 4},
+        )
+
+    assert failed.status_code == 200
+    assert failed.json()["status"] == "failed"
+    assert failed.json()["error_category"] == "terminal"
+    assert repeated.json()["id"] == failed.json()["id"]
+    assert len(backend.revocation.requests) == 1
+
+
 def test_dns_persist_lifecycle_endpoints(tmp_path: Path) -> None:
     """DNS Persist requests wait for explicit authorization and retain instructions."""
     headers = {"Authorization": "Bearer operator-key-12345"}

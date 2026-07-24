@@ -238,6 +238,28 @@ class AcmeShBackend(AcmeBackend):
             domains=domains,
         )
 
+    async def revoke_certificate(
+        self,
+        domain: str,
+        *,
+        reason: int | None = None,
+        account_key_path: str | None = None,
+        server_url: str | None = None,
+    ) -> None:
+        """Revoke acme.sh's certificate for ``domain`` using the configured account."""
+        args = ["--revoke", "--domain", domain]
+        if reason is not None:
+            args += ["--revoke-reason", str(reason)]
+        if server_url is not None:
+            args += ["--server", server_url]
+        if account_key_path is not None:
+            args += ["--accountkey-file", account_key_path]
+        try:
+            await self._run(args)
+        except TerminalAcmeShError as exc:
+            if "already revoked" not in exc.stderr.lower() and "already revoked" not in str(exc).lower():
+                raise
+
     async def get_certificate_expiry(self, cert_path: str) -> CertExpiry:
         args = [
             "--in",

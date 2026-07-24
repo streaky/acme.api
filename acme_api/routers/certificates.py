@@ -19,15 +19,19 @@ from fastapi import (
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from acme_api.auth.hash import AuthenticatedUser
 from acme_api.auth.rbac import require_operator, require_readonly
 from acme_api.db import get_db_session
 from acme_api.deployer import DeploymentError
 from acme_api.models.certificate import Certificate, CertificateStatus
+from acme_api.models.certificate_revocation import CertificateRevocation
 from acme_api.schemas.certificate import (
     CertificateCreate,
     CertificateGenerationSelect,
     CertificateRead,
     CertificateRelease,
+    CertificateRevocationCreate,
+    CertificateRevocationRead,
 )
 from acme_api.services.certificate_contracts import (
     CertificateBackendUnavailableError,
@@ -36,6 +40,7 @@ from acme_api.services.certificate_contracts import (
     CertificateNotFoundError,
     CertificateNotRenewableError,
 )
+from acme_api.services.certificate_revocations import request_certificate_revocation
 from acme_api.services.certificates import CertificateLifecycleService
 
 router = APIRouter(prefix="/v1/certificates", tags=["Certificates"])
@@ -221,6 +226,37 @@ async def select_certificate_generation(
             certificate_id,
             generation_id=payload.generation_id,
             idempotency_key=idempotency_key,
+        )
+    except CertificateNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except CertificateLifecycleError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+
+
+@router.post(
+    "/{certificate_id}/revoke",
+    response_model=CertificateRevocationRead,
+    summary="Revoke a certificate at its ACME certificate authority",
+    responses={
+        **_NOT_FOUND_RESPONSE,
+        409: {"description": "Certificate is unissued or request conflicts."},
+    },
+)
+async def revoke_certificate_at_ca(
+    certificate_id: uuid.UUID,
+    payload: CertificateRevocationCreate,
+    request: Request,
+    idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=255),
+    actor: AuthenticatedUser = Depends(require_operator),
+) -> CertificateRevocation:
+    """Revoke the managed certificate's primary domain through acme.sh."""
+    try:
+        return await request_certificate_revocation(
+            _certificate_service(request),
+            certificate_id,
+            reason=payload.reason,
+            idempotency_key=idempotency_key,
+            actor=actor.name,
         )
     except CertificateNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc

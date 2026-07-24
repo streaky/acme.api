@@ -5,6 +5,7 @@ from __future__ import annotations
 import datetime as dt
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -26,6 +27,23 @@ from acme_api.main import create_app
 from acme_api.models.api_key import APIKey, APIKeyRole
 
 
+@dataclass
+class RevocationState:
+    """Mutable revocation controls and observations for ``ArtifactBackend``."""
+
+    requests: list[tuple[str, int | None, str | None, str | None]] = field(default_factory=list)
+    error: AcmeShError | None = None
+
+
+@dataclass
+class PersistValueState:
+    """Mutable DNS Persist controls and observations for ``ArtifactBackend``."""
+
+    calls: int = 0
+    error: AcmeShError | None = None
+    requests: list[tuple[str, bool]] = field(default_factory=list)
+
+
 class ArtifactBackend:
     """Test backend that writes deployable certificate artifacts."""
 
@@ -34,13 +52,32 @@ class ArtifactBackend:
         self.issue_calls = 0
         self.fail_issues = False
         self.renew_calls = 0
-        self.persist_value_calls = 0
-        self.persist_value_error: AcmeShError | None = None
-        self.persist_value_requests: list[tuple[str, bool]] = []
+        self._persist_value = PersistValueState()
+        self.revocation = RevocationState()
 
     async def register_account(self, email: str, server_url: str) -> AccountInfo:
         """Return deterministic account metadata for protocol completeness."""
         return AccountInfo(key_path="account.key", email=email, server_url=server_url)
+
+    @property
+    def persist_value_calls(self) -> int:
+        """Return the number of generated DNS Persist values."""
+        return self._persist_value.calls
+
+    @property
+    def persist_value_error(self) -> AcmeShError | None:
+        """Return the configured DNS Persist generation error."""
+        return self._persist_value.error
+
+    @persist_value_error.setter
+    def persist_value_error(self, error: AcmeShError | None) -> None:
+        """Configure the DNS Persist generation error."""
+        self._persist_value.error = error
+
+    @property
+    def persist_value_requests(self) -> list[tuple[str, bool]]:
+        """Return generated DNS Persist scope requests."""
+        return self._persist_value.requests
 
     async def make_dns_persist_value(
         self,
@@ -52,10 +89,10 @@ class ArtifactBackend:
     ) -> str:
         """Return a stable, account-bound test instruction."""
         del account_key_path, server_url
-        self.persist_value_calls += 1
-        self.persist_value_requests.append((domain, wildcard))
-        if self.persist_value_error is not None:
-            raise self.persist_value_error
+        self._persist_value.calls += 1
+        self._persist_value.requests.append((domain, wildcard))
+        if self._persist_value.error is not None:
+            raise self._persist_value.error
         return f"persist-value-for-{domain}"
 
     async def issue_certificate(
@@ -80,6 +117,19 @@ class ArtifactBackend:
         del force_renewal
         self.renew_calls += 1
         return self._result(domains, "renew", "account.key")
+
+    async def revoke_certificate(
+        self,
+        domain: str,
+        *,
+        reason: int | None = None,
+        account_key_path: str | None = None,
+        server_url: str | None = None,
+    ) -> None:
+        """Record a deterministic acme.sh revocation request."""
+        self.revocation.requests.append((domain, reason, account_key_path, server_url))
+        if self.revocation.error is not None:
+            raise self.revocation.error
 
     async def get_certificate_expiry(self, cert_path: str) -> CertExpiry:
         raise NotImplementedError

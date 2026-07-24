@@ -175,3 +175,9 @@ class Certificate(Base, TimestampMixin):
         lazy="selectin",
         doc="Records of each renewal attempt made against this certificate.",
     )
+    revocations = relationship(
+        "acme_api.models.certificate_revocation.CertificateRevocation",
+        back_populates="certificate",
+        lazy="selectin",
+        doc="Domain-based ACME revocation requests for this certificate.",
+    )

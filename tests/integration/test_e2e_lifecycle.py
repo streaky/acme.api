@@ -94,6 +94,17 @@ class ArtifactBackend:
         self.renew_calls += 1
         return self._result(domains, "renew", "account.key")
 
+    async def revoke_certificate(
+        self,
+        domain: str,
+        *,
+        reason: int | None = None,
+        account_key_path: str | None = None,
+        server_url: str | None = None,
+    ) -> None:
+        """Satisfy the ACME backend protocol for lifecycle integration tests."""
+        del domain, reason, account_key_path, server_url
+
     async def get_certificate_expiry(self, cert_path: str) -> CertExpiry:
         """Return deterministic expiry metadata for a certificate path."""
         return CertExpiry(

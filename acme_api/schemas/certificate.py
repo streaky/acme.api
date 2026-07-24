@@ -70,6 +70,37 @@ class CertificateRelease(BaseModel):
     revision: int = Field(ge=1)
 
 
+class CertificateRevocationCreate(BaseModel):
+    """Optional standardized reason for an acme.sh domain revocation."""
+
+    reason: int | None = Field(default=None, ge=0, le=10)
+
+    @field_validator("reason")
+    @classmethod
+    def _reject_unused_reason(cls, reason: int | None) -> int | None:
+        """Reject the unused RFC 5280 reason-code value."""
+        if reason == 7:
+            raise ValueError("Revocation reason code 7 is unused.")
+        return reason
+
+
+class CertificateRevocationRead(BaseModel):
+    """Safe persisted state for a certificate revocation request."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    certificate_id: uuid.UUID
+    domain: str
+    reason: int | None = None
+    actor: str | None = None
+    status: Literal["pending", "succeeded", "failed"]
+    error_category: Literal["transient", "terminal"] | None = None
+    error_details: str | None = None
+    created_at: datetime
+    completed_at: datetime | None = None
+
+
 class DnsPersistChallenge(BaseModel):
     """One-time account-bound TXT record required by DNS Persist mode."""
 
