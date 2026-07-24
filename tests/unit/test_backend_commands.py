@@ -279,6 +279,16 @@ class TestRevokeCertificate:
 
         assert "--ecc" not in mock_run.call_args.args
 
+    @pytest.mark.anyio
+    async def test_revoke_already_revoked_problem_is_idempotent(self, backend: AcmeShBackend) -> None:
+        """Treat the RFC 8555 alreadyRevoked problem type as a completed revocation."""
+        with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_run:
+            mock_run.return_value = failed_process(
+                "urn:ietf:params:acme:error:alreadyRevoked: certificate is already revoked"
+            )
+
+            await backend.revoke_certificate("example.com")
+
 
 class TestParsing:
     """Verify supported acme.sh output parsing variants."""

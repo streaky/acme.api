@@ -260,7 +260,8 @@ class AcmeShBackend(AcmeBackend):
         try:
             await self._run(args)
         except TerminalAcmeShError as exc:
-            if "already revoked" not in exc.stderr.lower() and "already revoked" not in str(exc).lower():
+            error_text = f"{exc.stderr}\n{exc}".lower()
+            if "already revoked" not in error_text and "alreadyrevoked" not in error_text:
                 raise
 
     async def get_certificate_expiry(self, cert_path: str) -> CertExpiry:
