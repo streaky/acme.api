@@ -218,6 +218,13 @@ disable renewal, or otherwise modify the local certificate record. Reusing the
 same key returns the durable original result without another acme.sh command.
 Reasons `0` through `10` are accepted except `7`, which RFC 5280 leaves unused.
 
+acme.sh selects the certificate it revokes from its managed domain and key-type
+slot; it does not accept a certificate file, serial number, fingerprint, or
+deployment generation. Generation selection only repoints acme.api's deployed
+artifact view and does not modify acme.sh's managed certificate. Consequently,
+CA revocation through this endpoint cannot target a retained historical
+generation independently of the certificate currently managed by acme.sh.
+
 ## Certificate Deployment
 
 Successful issuance and renewal deploy artifacts under the `deployment_directory`

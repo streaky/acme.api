@@ -237,6 +237,10 @@ async def select_certificate_generation(
     "/{certificate_id}/revoke",
     response_model=CertificateRevocationRead,
     summary="Revoke a certificate at its ACME certificate authority",
+    description=(
+        "Revokes the certificate selected by acme.sh's managed primary-domain and key-type slot. "
+        "It cannot select an acme.api deployment generation or historical artifact."
+    ),
     responses={
         **_NOT_FOUND_RESPONSE,
         409: {"description": "Certificate is unissued or request conflicts."},
