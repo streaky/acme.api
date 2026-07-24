@@ -60,7 +60,9 @@ async def request_certificate_revocation(
                 raise CertificateLifecycleError(
                     "Idempotency key was already used with another revocation reason."
                 ) from None
-            return existing
+            if existing.status is not CertificateRevocationStatus.PENDING:
+                return existing
+            revocation = existing
 
         account = service._acme_account(certificate.acme_account_ref)
         try:
@@ -91,7 +93,7 @@ async def request_certificate_revocation(
             session,
             certificate,
             "certificate.revoked_at_ca",
-            {"domain": revocation.domain, "reason": reason, "actor": actor},
+            {"domain": revocation.domain, "reason": revocation.reason, "actor": revocation.actor},
         )
         await session.commit()
         await session.refresh(revocation)

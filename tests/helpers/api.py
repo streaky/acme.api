@@ -32,7 +32,7 @@ class RevocationState:
     """Mutable revocation controls and observations for ``ArtifactBackend``."""
 
     requests: list[tuple[str, int | None, str | None, str | None]] = field(default_factory=list)
-    error: AcmeShError | None = None
+    error: Exception | None = None
 
 
 @dataclass

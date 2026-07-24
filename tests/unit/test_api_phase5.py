@@ -124,6 +124,43 @@ def test_certificate_authority_revocation_persists_terminal_failure(tmp_path: Pa
     assert len(backend.revocation.requests) == 1
 
 
+def test_certificate_authority_revocation_resumes_persisted_pending_request(tmp_path: Path) -> None:
+    """Retry a request after an interrupted acme.sh invocation left it pending."""
+    headers = {"Authorization": "Bearer operator-key-12345", "Idempotency-Key": "resume-pending"}
+    app = make_api_app(tmp_path)
+    backend = app.state.acme_backend
+    assert isinstance(backend, ArtifactBackend)
+    backend.revocation.error = RuntimeError("worker stopped after request persistence")
+    with TestClient(app, raise_server_exceptions=False) as client:
+        created = client.post(
+            "/v1/certificates",
+            headers=headers,
+            json={
+                "name": "resume-pending-revoke-cert",
+                "domains": ["example.org"],
+                "acme_account_ref": "letsencrypt-production",
+                "dns_provider_ref": "cloudflare-main",
+            },
+        )
+        certificate_id = created.json()["id"]
+        interrupted = client.post(
+            f"/v1/certificates/{certificate_id}/revoke",
+            headers=headers,
+            json={"reason": 5},
+        )
+        backend.revocation.error = None
+        resumed = client.post(
+            f"/v1/certificates/{certificate_id}/revoke",
+            headers=headers,
+            json={"reason": 5},
+        )
+
+    assert interrupted.status_code == 500
+    assert resumed.status_code == 200
+    assert resumed.json()["status"] == "succeeded"
+    assert len(backend.revocation.requests) == 2
+
+
 def test_dns_persist_lifecycle_endpoints(tmp_path: Path) -> None:
     """DNS Persist requests wait for explicit authorization and retain instructions."""
     headers = {"Authorization": "Bearer operator-key-12345"}
