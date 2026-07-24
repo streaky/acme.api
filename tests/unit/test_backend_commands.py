@@ -174,6 +174,23 @@ class TestIssueCertificateDns01:
         assert result.domains == ["example.com", "www.example.com"]
 
     @pytest.mark.anyio
+    async def test_issue_rsa_certificate_selects_rsa_slot(self, backend: AcmeShBackend) -> None:
+        """Pass the stored RSA key length to acme.sh instead of using its ECC default."""
+        with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_run:
+            mock_run.return_value = successful_process()
+
+            await backend.issue_certificate(
+                domains=["example.com"],
+                method="dns-01",
+                challenge_params={
+                    "dns_provider": "cloudflare",
+                    "env_vars_file": None,
+                    "key_algorithm": "rsa-4096",
+                },
+            )
+        assert has_flag_pair(mock_run.call_args.args, "--keylength", "4096")
+
+    @pytest.mark.anyio
     async def test_dns_credentials_are_passed_per_subprocess(
         self, backend: AcmeShBackend, tmp_path: pathlib.Path
     ) -> None:
@@ -240,6 +257,54 @@ class TestRenewCertificate:
         assert has_flag_pair(call_args, "--domain", "www.example.com")
         assert "--force" in call_args
         assert result.domains == ["example.com", "www.example.com"]
+
+
+class TestRevokeCertificate:
+    """Verify revocations use acme.sh's documented domain interface."""
+
+    @pytest.mark.anyio
+    async def test_revoke_certificate_with_reason_and_account(
+        self,
+        backend: AcmeShBackend,
+    ) -> None:
+        """Pass the selected account and optional standardized reason to acme.sh."""
+        with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_run:
+            mock_run.return_value = successful_process()
+
+            await backend.revoke_certificate(
+                "example.com",
+                reason=1,
+                account_key_path="/acmesh/account.key",
+                server_url="https://ca.example/directory",
+            )
+
+        call_args = mock_run.call_args.args
+        assert "--revoke" in call_args
+        assert has_flag_pair(call_args, "--domain", "example.com")
+        assert has_flag_pair(call_args, "--revoke-reason", "1")
+        assert has_flag_pair(call_args, "--accountkey-file", "/acmesh/account.key")
+        assert has_flag_pair(call_args, "--server", "https://ca.example/directory")
+        assert "--ecc" in call_args
+
+    @pytest.mark.anyio
+    async def test_revoke_rsa_certificate_without_ecc_flag(self, backend: AcmeShBackend) -> None:
+        """Select acme.sh's RSA certificate slot when the managed key is RSA."""
+        with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_run:
+            mock_run.return_value = successful_process()
+
+            await backend.revoke_certificate("example.com", key_algorithm="rsa-2048")
+
+        assert "--ecc" not in mock_run.call_args.args
+
+    @pytest.mark.anyio
+    async def test_revoke_already_revoked_problem_is_idempotent(self, backend: AcmeShBackend) -> None:
+        """Treat the RFC 8555 alreadyRevoked problem type as a completed revocation."""
+        with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_run:
+            mock_run.return_value = failed_process(
+                "urn:ietf:params:acme:error:alreadyRevoked: certificate is already revoked"
+            )
+
+            await backend.revoke_certificate("example.com")
 
 
 class TestParsing:

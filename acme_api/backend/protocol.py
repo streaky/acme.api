@@ -48,4 +48,14 @@ class AcmeBackend(t.Protocol):
         force_renewal: bool = False,
     ) -> IssuanceResult: ...
 
+    async def revoke_certificate(
+        self,
+        domain: str,
+        *,
+        reason: int | None = None,
+        key_algorithm: str = "ecdsa",
+        account_key_path: str | None = None,
+        server_url: str | None = None,
+    ) -> None: ...
+
     async def get_certificate_expiry(self, cert_path: str) -> CertExpiry: ...

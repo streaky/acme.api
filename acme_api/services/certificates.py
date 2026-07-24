@@ -317,14 +317,17 @@ class CertificateLifecycleService:
         try:
             account = self._acme_account(certificate.acme_account_ref)
             challenge_params: dict[str, object] = {}
+            challenge_params["key_algorithm"] = certificate.key_algorithm
             if method == "dns-01":
                 if certificate.dns_provider_ref is None:
                     raise DeploymentError("DNS provider is required for dns-01 issuance.")
                 provider = self._dns_provider(certificate.dns_provider_ref)
-                challenge_params = {
-                    "dns_provider": provider.provider_name,
-                    "env_vars_file": str(provider.env_vars_file_path),
-                }
+                challenge_params.update(
+                    {
+                        "dns_provider": provider.provider_name,
+                        "env_vars_file": str(provider.env_vars_file_path),
+                    }
+                )
             result = await self._backend.issue_certificate(
                 domains=certificate.domains,
                 method=method,

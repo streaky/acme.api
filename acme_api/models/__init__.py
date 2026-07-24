@@ -18,6 +18,7 @@ from __future__ import annotations
 from acme_api.models.api_key import APIKey, APIKeyRole
 from acme_api.models.base import Base, TimestampMixin
 from acme_api.models.certificate import Certificate, CertificateStatus
+from acme_api.models.certificate_revocation import CertificateRevocation, CertificateRevocationStatus
 from acme_api.models.event import Event
 from acme_api.models.renewal_attempt import RenewalAttempt
 from acme_api.models.webhook import WebhookConfig
@@ -28,6 +29,8 @@ __all__ = [
     "Base",
     "Certificate",
     "CertificateStatus",
+    "CertificateRevocation",
+    "CertificateRevocationStatus",
     "Event",
     "RenewalAttempt",
     "TimestampMixin",

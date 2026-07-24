@@ -178,6 +178,7 @@ OpenAPI is generated at `/openapi.json`; Swagger UI is available at `/docs`.
 | `POST` | `/v1/certificates/{id}/authorize` | operator | Authorize or retry DNS Persist issuance after publishing TXT |
 | `POST` | `/v1/certificates/{id}/release` | operator | Release a held DNS Persist revision; requires `Idempotency-Key` and `{ "revision": n }` |
 | `POST` | `/v1/certificates/{id}/renew` | operator | Queue manual renewal |
+| `POST` | `/v1/certificates/{id}/revoke` | operator | Revoke the issued primary domain through acme.sh; requires `Idempotency-Key` |
 | `DELETE` | `/v1/certificates/{id}` | operator | Soft-delete as revoked |
 | `GET` | `/v1/accounts` | readonly | List configured ACME accounts |
 | `GET` | `/v1/providers` | readonly | List configured DNS providers |
@@ -194,6 +195,35 @@ curl \
   -H "Authorization: Bearer $ACME_API_KEY" \
   http://localhost:8080/v1/certificates
 ```
+
+### Certificate revocation
+
+`DELETE /v1/certificates/{id}` only changes the local request record; it does
+not contact a certificate authority. To revoke an issued certificate at its
+configured CA, call `POST /v1/certificates/{id}/revoke` with an
+`Idempotency-Key` header and, optionally, an RFC 5280 reason:
+
+```sh
+curl -X POST \
+  -H "Authorization: Bearer $ACME_API_KEY" \
+  -H "Idempotency-Key: revoke-example-20260724" \
+  -H "Content-Type: application/json" \
+  --data '{"reason": 1}' \
+  http://localhost:8080/v1/certificates/$CERTIFICATE_ID/revoke
+```
+
+The operation invokes acme.sh as `--revoke --domain <primary-domain>` and adds
+`--revoke-reason` when requested. It does not delete deployed artifacts,
+disable renewal, or otherwise modify the local certificate record. Reusing the
+same key returns the durable original result without another acme.sh command.
+Reasons `0` through `10` are accepted except `7`, which RFC 5280 leaves unused.
+
+acme.sh selects the certificate it revokes from its managed domain and key-type
+slot; it does not accept a certificate file, serial number, fingerprint, or
+deployment generation. Generation selection only repoints acme.api's deployed
+artifact view and does not modify acme.sh's managed certificate. Consequently,
+CA revocation through this endpoint cannot target a retained historical
+generation independently of the certificate currently managed by acme.sh.
 
 ## Certificate Deployment
 

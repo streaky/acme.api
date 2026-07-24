@@ -61,6 +61,18 @@ class MockAcmeBackend:
             domains=domains,
         )
 
+    async def revoke_certificate(
+        self,
+        domain: str,
+        *,
+        reason: int | None = None,
+        key_algorithm: str = "ecdsa",
+        account_key_path: str | None = None,
+        server_url: str | None = None,
+    ) -> None:
+        """Accept a deterministic revocation without contacting an ACME server."""
+        del domain, reason, key_algorithm, account_key_path, server_url
+
     async def get_certificate_expiry(self, cert_path: str) -> CertExpiry:
         """Return a predictable expiry for the supplied certificate path."""
         cert = self._cert_expiry("example.com")

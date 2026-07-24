@@ -94,6 +94,18 @@ class ArtifactBackend:
         self.renew_calls += 1
         return self._result(domains, "renew", "account.key")
 
+    async def revoke_certificate(
+        self,
+        domain: str,
+        *,
+        reason: int | None = None,
+        key_algorithm: str = "ecdsa",
+        account_key_path: str | None = None,
+        server_url: str | None = None,
+    ) -> None:
+        """Satisfy the ACME backend protocol for lifecycle integration tests."""
+        del domain, reason, key_algorithm, account_key_path, server_url
+
     async def get_certificate_expiry(self, cert_path: str) -> CertExpiry:
         """Return deterministic expiry metadata for a certificate path."""
         return CertExpiry(
@@ -236,6 +248,7 @@ def test_full_certificate_lifecycle_with_webhooks(
                 "domains": ["example.com", "www.example.com"],
                 "acme_account_ref": "letsencrypt-staging",
                 "dns_provider_ref": "cloudflare-main",
+                "key_algorithm": "rsa-4096",
             },
         )
         assert created.status_code == 202
@@ -253,6 +266,7 @@ def test_full_certificate_lifecycle_with_webhooks(
             {
                 "dns_provider": "cloudflare",
                 "env_vars_file": str(Path("tests/fixtures/sample_dns.env").resolve()),
+                "key_algorithm": "rsa-4096",
             }
         ]
 
